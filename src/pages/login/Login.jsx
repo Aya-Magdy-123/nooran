@@ -2,6 +2,7 @@ import { useState } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../../firebase";
 import { useNavigate } from "react-router-dom";
+import logo from "../../assets/logo.png";
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -85,7 +86,7 @@ const handleLogin = async (e) => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
       <div className="bg-white px-6 py-4 rounded-xl shadow-md w-full max-w-md">
-        <img src="src\assets\logo.png" alt="Logo" className="mx-auto  h-32 " />
+        <img src={logo} alt="Logo" className="mx-auto  h-32 " />
         <h2 className="text-2xl font-bold text-center mb-4">تسجيل الدخول</h2>
 
         {error && (
