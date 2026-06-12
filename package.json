@@ -9,8 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "countries-and-timezones": "^3.9.0",
     "firebase": "^12.14.0",
     "lucide-react": "^0.383.0",
+    "luxon": "^3.7.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-phone-input-2": "^2.15.1",

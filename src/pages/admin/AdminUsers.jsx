@@ -6,6 +6,7 @@ import { Modal, ConfirmDialog, Badge, PageHeader, EmptyState } from '../../compo
 import PhoneInput from 'react-phone-input-2'
 import 'react-phone-input-2/lib/style.css'
 import { MonthPicker } from '../../components/ui/MonthPicker'
+import StudentSessionForm from '../../components/ui/StudentSessionForm'
 
 
 const TABS = [
@@ -19,75 +20,157 @@ const inputClass = "w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.
 
 // ─── Supervisors Tab ──────────────────────────────────────────────────────────
 function SupervisorsTab() {
-  const { supervisors, addSupervisor, updateSupervisor, deleteSupervisor, toggleAbsent } = useApp()
-  const [search, setSearch]     = useState('')
-  const [modalOpen, setModal]   = useState(false)
-  const [editItem, setEditItem] = useState(null)
-  const [confirm, setConfirm]   = useState(null)
-  const [form, setForm]         = useState({ name: '', phone: '', shift: 'مسائي', status: 'active' })
+  const { supervisors, addSupervisor, updateSupervisor, deleteSupervisor, toggleAbsent,restoreSupervisor } = useApp()
+  const [search, setSearch]           = useState('')
+  const [modalOpen, setModal]         = useState(false)
+  const [editItem, setEditItem]       = useState(null)
+  const [confirm, setConfirm]         = useState(null)
+  const [attendConfirm, setAttendConfirm] = useState(null) // ← مودال تأكيد الحضور/الغياب
+  const [form, setForm]               = useState({ name: '', email: '', phone: '', shift: 'morning', status: 'active' })
   const [filterShift, setFilterShift] = useState('all')
+  const [filterStatus, setFilterStatus] = useState('all')
 
   const filtered = supervisors.filter(s => {
-    const matchSearch = s.name.includes(search) || s.phone.includes(search)
-    const matchShift  = filterShift === 'all' || s.shift === filterShift
-    return matchSearch && matchShift
+    const matchSearch = s.name.includes(search) || (s.phone || '').includes(search)
+    const matchShift  = filterShift  === 'all' || s.shift  === filterShift
+    const matchStatus = filterStatus === 'all' || s.status === filterStatus
+    return matchSearch && matchShift && matchStatus
   })
-  const openAdd  = () => { setEditItem(null); setForm({ name: '', phone: '', shift: 'مسائي', status: 'active' }); setModal(true) }
-  const openEdit = s  => { setEditItem(s); setForm({ name: s.name, phone: s.phone, shift: s.shift, status: s.status }); setModal(true) }
+
+  const openAdd  = () => { setEditItem(null); setForm({ name: '', email: '', phone: '', shift: 'morning', status: 'active' }); setModal(true) }
+  const openEdit = s  => { setEditItem(s); setForm({ name: s.name, email: s.email || '', phone: s.phone, shift: s.shift, status: s.status }); setModal(true) }
   const save = () => {
     if (editItem) updateSupervisor({ ...editItem, ...form })
     else          addSupervisor(form)
     setModal(false)
   }
 
+  const shiftLabel = (shift) => {
+    if (shift === 'morning')   return '🌅 4ص - 12ظ'
+    if (shift === 'afternoon') return '🌞 12ظ - 8م'
+    if (shift === 'evening')   return '🌙 8م - 4ص'
+    return shift
+  }
+
+    const role = localStorage.getItem("role")
+  const isAdmin = role === 'admin'
+
+  const [distributing, setDistributing] = useState(false)
+const [distributeMsg, setDistributeMsg] = useState(null)
+
+const BASE_API = "http://localhost:5000" // ← ثابت هنا مش من متغير تاني
+
+const handleDistribute = async (shift) => {
+  try {
+    setDistributing(true); setDistributeMsg(null)
+    
+    const res = await fetch(`${BASE_API}/api/distribution/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shift }),
+    })
+    
+    const data = await res.json()
+    
+    if (!res.ok) throw new Error(data.error || 'فشل التوزيع')
+    
+    setDistributeMsg({ type: 'success', text: data.message })
+  } catch (err) {
+    setDistributeMsg({ type: 'error', text: err.message })
+    console.error('Distribution error:', err)  // ← عشان نشوف الـ error
+  } finally {
+    setDistributing(false)
+    setTimeout(() => setDistributeMsg(null), 4000)
+  }
+}
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
+
+      {/* Search + Filters + Add */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px]">
           <svg className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
           <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="بحث في المشرفين..."
             className="w-full pr-12 pl-4 py-3 bg-white border border-gray-200 rounded-2xl shadow-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-gray-700" />
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-gray-500 flex items-center gap-1">
-            <Filter size={14}/> الشيفت:
-          </span>
-          <div className="flex gap-2 bg-gray-50 p-1 rounded-xl">
-            {[
-              { value: 'all',       label: 'الكل' },
-              { value: 'morning',   label: '🌅 4ص - 12ظ' },
-              { value: 'afternoon', label: '🌞 12ظ - 8م' },
-              { value: 'evening',   label: '🌙 8م - 4ص' },
-            ].map(opt => (
-              <button key={opt.value} onClick={() => setFilterShift(opt.value)}
-                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                  filterShift === opt.value
-                    ? 'bg-white text-teal-700 shadow-sm border border-gray-100'
-                    : 'text-gray-500 hover:text-teal-600'
-                }`}>
-                {opt.label}
-              </button>
-            ))}
-          </div>
+
+        {/* فلتر الشيفت */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-500 flex items-center gap-1"><Filter size={13}/> الشيفت:</span>
+          <select value={filterShift} onChange={e => setFilterShift(e.target.value)}
+            className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm min-w-[140px]">
+            <option value="all">كل الشيفتات</option>
+            <option value="morning">🌅 4ص - 12ظ</option>
+            <option value="afternoon">🌞 12ظ - 8م</option>
+            <option value="evening">🌙 8م - 4ص</option>
+          </select>
         </div>
+
+        {/* فلتر الحضور */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-500">الحالة:</span>
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+            className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm min-w-[120px]">
+            <option value="all">الكل</option>
+            <option value="active">حاضر</option>
+            <option value="absent">غائب</option>
+          </select>
+        </div>
+
+        {/* {(filterShift !== 'all' || filterStatus !== 'all') && (
+          <button onClick={() => { setFilterShift('all'); setFilterStatus('all') }}
+            className="text-xs text-red-400 hover:text-red-600 px-3 py-2 rounded-xl hover:bg-red-50 transition-all font-medium">
+            ✕ مسح
+          </button>
+        )} */}
+
+        {isAdmin && (
         <button onClick={openAdd} className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl shadow-md hover:shadow-lg transition-all font-medium whitespace-nowrap">
           <Plus size={18}/> إضافة مشرف
         </button>
+         )}
       </div>
+      {/* {isAdmin && (
+  <div className="flex items-center gap-2">
+    <span className="text-xs font-semibold text-gray-500">توزيع يدوي:</span>
+    {['morning','afternoon','evening'].map(shift => (
+      <button
+        key={shift}
+        onClick={() => handleDistribute(shift)}
+        disabled={distributing}
+        className="text-xs px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-all font-semibold disabled:opacity-50">
+        {shift === 'morning' ? '🌅 من 4 ص الي 12 ظهرا' : shift === 'afternoon' ? '🌞 من 12 ظهرا الي 8 م' : '🌙 من 8 م الي 4 ص'}
+      </button>
+    ))}
+  </div>
+)} */}
 
+{/* رسالة نجاح/خطأ */}
+{distributeMsg && (
+  <div className={`text-xs px-3 py-2 rounded-xl font-medium ${
+    distributeMsg.type === 'success'
+      ? 'bg-green-50 text-green-700 border border-green-200'
+      : 'bg-red-50 text-red-600 border border-red-200'
+  }`}>
+    {distributeMsg.text}
+  </div>
+)}
+       
+
+      {/* Table */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <table className="w-full">
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-100">
-              {['الاسم','الهاتف','الشيفت','الحالة','إجراء'].map(h => (
+              {['الاسم','الهاتف','الشيفت','الحالة', isAdmin?'إجراء':''].map(h => (
                 <th key={h} className="px-5 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {filtered.length === 0 && <tr><td colSpan={6} className="px-5 py-16 text-center"><EmptyState /></td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={5} className="px-5 py-16 text-center"><EmptyState /></td></tr>}
             {filtered.map(s => (
               <tr key={s.id} className="hover:bg-gray-50/50 transition-colors">
                 <td className="px-5 py-4">
@@ -99,32 +182,57 @@ function SupervisorsTab() {
                   </div>
                 </td>
                 <td className="px-5 py-4 text-sm text-gray-500 font-mono">{s.phone}</td>
-                <td className="px-5 py-4 text-sm text-gray-600">
-  {s.shift === 'morning' ? '🌅 4ص - 12ظ' :
-   s.shift === 'afternoon' ? '🌞 12ظ - 8م' :
-   s.shift === 'evening' ? '🌙 8م - 4ص' : s.shift}
-</td>
+                <td className="px-5 py-4 text-sm text-gray-600">{shiftLabel(s.shift)}</td>
                 <td className="px-5 py-4"><Badge status={s.status} /></td>
+
+             
                 <td className="px-5 py-4">
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => openEdit(s)} className="p-2 text-yellow-600 rounded-xl hover:text-teal-600 hover:bg-teal-50 transition-all"><Pencil size={16}/></button>
-                    <button onClick={() => setConfirm({ id: s.id, name: s.name })} className="p-2 text-red-500 rounded-xl hover:bg-red-50 transition-all"><Trash2 size={16}/></button>
-                    <button onClick={() => toggleAbsent(s.id)}
-                      className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border font-semibold transition-all ${
-                        s.status === 'absent'
-                          ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100'
-                          : 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100'
-                      }`}>
-                      {s.status === 'absent' ? <><UserCheck size={13}/> حاضر</> : <><UserX size={13}/> غائب</>}
-                    </button>
-                  </div>
-                </td>
+  {s.isDeleted ? (
+    // مشرف محذوف — بس زرار استعادة
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-red-400 font-medium px-2 py-1 bg-red-50 rounded-lg">
+        محذوف
+      </span>
+      {isAdmin && (
+        <button
+          onClick={() => restoreSupervisor(s.id)}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border font-semibold
+            bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 transition-all">
+          <RotateCcw size={13}/> استعادة
+        </button>
+      )}
+    </div>
+  ) : isAdmin ? (
+    // مشرف نشط — الأزرار العادية
+    <div className="flex items-center gap-2">
+      <button onClick={() => openEdit(s)} className="p-2 text-yellow-600 rounded-xl hover:text-teal-600 hover:bg-teal-50 transition-all">
+        <Pencil size={16}/>
+      </button>
+      <button onClick={() => setConfirm({ id: s.id, name: s.name })} className="p-2 text-red-500 rounded-xl hover:bg-red-50 transition-all">
+        <Trash2 size={16}/>
+      </button>
+      <button
+        onClick={() => setAttendConfirm({ supervisor: s })}
+        className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border font-semibold transition-all ${
+          s.status === 'absent'
+            ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100'
+            : 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100'
+        }`}>
+        {s.status === 'absent' ? <><UserCheck size={13}/> حاضر</> : <><UserX size={13}/> غائب</>}
+      </button>
+    </div>
+  ) : (
+    ""
+  )}
+</td>
+                
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
+      {/* Modal إضافة/تعديل */}
       {modalOpen && (
         <Modal
           title={
@@ -137,9 +245,7 @@ function SupervisorsTab() {
               </span>
             </div>
           }
-          onClose={() => setModal(false)}
-          wide
-        >
+          onClose={() => setModal(false)} wide>
           <div className="flex flex-col gap-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -148,28 +254,22 @@ function SupervisorsTab() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">البريد الإلكتروني <span className="text-red-400">*</span></label>
-                <input className={inputClass} placeholder="أدخل البريد الالكتروني..." value={form.email} onChange={e => setForm(p=>({...p,email:e.target.value}))} />
+                <input className={inputClass} placeholder="example@email.com" value={form.email} onChange={e => setForm(p=>({...p,email:e.target.value}))} />
               </div>
-
               <div className="w-full">
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">رقم الهاتف <span className="text-red-400">*</span></label>
-              <PhoneInput
-                country={'eg'}
-                value={form.phone}
-                onChange={phone => setForm(p=>({...p,phone}))}
-                inputClass={`w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all ${form.phone ? 'text-gray-700' : 'text-gray-400'}`}
-              />
+                <PhoneInput country={'eg'} value={form.phone} onChange={phone => setForm(p=>({...p,phone}))}
+                  inputClass={`w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all`} />
               </div>
-               <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5">الشيفت</label>
-              <select className={inputClass} value={form.shift} onChange={e => setForm(p=>({...p,shift:e.target.value}))}>
-                <option value="morning"> 4ص الي 12ظهرا  </option>
-                <option value="afternoon">12 ظهرا الي 8 مساء</option>
-                <option value="evening"> 8 مساء الي 4 ص </option>
-              </select>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">الشيفت</label>
+                <select className={inputClass} value={form.shift} onChange={e => setForm(p=>({...p,shift:e.target.value}))}>
+                  <option value="morning">🌅 4ص الي 12ظهرا</option>
+                  <option value="afternoon">🌞 12 ظهرا الي 8 مساء</option>
+                  <option value="evening">🌙 8 مساء الي 4 ص</option>
+                </select>
+              </div>
             </div>
-            </div>
-           
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-2">الحالة</label>
               <div className="grid grid-cols-2 gap-2">
@@ -197,11 +297,27 @@ function SupervisorsTab() {
         </Modal>
       )}
 
+      {/* مودال تأكيد الحضور/الغياب */}
+      {attendConfirm && (
+        <ConfirmDialog
+          message={
+            attendConfirm.supervisor.status === 'absent'
+              ? `هل تريد تسجيل "${attendConfirm.supervisor.name}" حاضراً؟`
+              : `هل تريد تسجيل "${attendConfirm.supervisor.name}" غائباً؟`
+          }
+          confirmText={attendConfirm.supervisor.status === 'absent' ? 'تسجيل حاضر' : 'تسجيل غائب'}
+          danger={attendConfirm.supervisor.status !== 'absent'}
+          onConfirm={() => { toggleAbsent(attendConfirm.supervisor.id); setAttendConfirm(null); window.location.reload(); }}
+          onCancel={() => setAttendConfirm(null)}
+        />
+      )}
+
+      {/* مودال تأكيد الحذف */}
       {confirm && (
         <ConfirmDialog
           message={`هل تريد حذف المشرف "${confirm.name}"؟`}
           danger
-          onConfirm={() => { deleteSupervisor(confirm.id); setConfirm(null) }}
+          onConfirm={() => { deleteSupervisor(confirm.id); setConfirm(null); window.location.reload(); }}
           onCancel={() => setConfirm(null)}
         />
       )}
@@ -211,20 +327,24 @@ function SupervisorsTab() {
 
 // ─── Teachers Tab ─────────────────────────────────────────────────────────────
 function TeachersTab() {
-  const { teachers, programs, students, addTeacher, updateTeacher, deleteTeacher } = useApp()
-  const [search, setSearch]          = useState('')
-  const [modalOpen, setModal]        = useState(false)
-  const [editItem, setEditItem]      = useState(null)
-  const [confirm, setConfirm]        = useState(null)
-  const [halaqaModal, setHalaqaModal] = useState(null)
-  const [form, setForm]              = useState({ name: '', phone: '', program: '', shift: 'مسائي' })
+  const { teachers, teachersLoading, teachersError, programs, addTeacher, updateTeacher, deleteTeacher } = useApp()
+  const [search, setSearch]     = useState('')
+  const [modalOpen, setModal]   = useState(false)
+  const [editItem, setEditItem] = useState(null)
+  const [confirm, setConfirm]   = useState(null)
+  const [form, setForm]         = useState({ name: '', phone: '', program: '', shift: '' })
 
-  const filtered = teachers.filter(t => t.name.includes(search))
-  const openAdd  = () => { setEditItem(null); setForm({ name: '', phone: '', program: '', shift: 'مسائي' }); setModal(true) }
-  const openEdit = t  => { setEditItem(t); setForm({ name: t.name, phone: t.phone, program: t.program, shift: t.shift }); setModal(true) }
-  const save = () => {
-    if (editItem) updateTeacher({ ...editItem, ...form })
-    else          addTeacher(form)
+  if (teachersLoading) return <div className="flex items-center justify-center py-20 text-gray-400"><div className="animate-spin w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full ml-2"/>جاري التحميل...</div>
+  if (teachersError)   return <div className="text-center py-20 text-red-400">⚠️ {teachersError}</div>
+
+  const filtered = teachers.filter(t => !t.isDeleted && t.name.includes(search))
+
+  const openAdd  = () => { setEditItem(null); setForm({ name: '', phone: '', program: '', shift: '' }); setModal(true) }
+  const openEdit = t  => { setEditItem(t); setForm({ name: t.name, phone: t.phone, program: t.program || '', shift: t.shift || '' }); setModal(true) }
+  
+  const save = async () => {
+    if (editItem) await updateTeacher({ ...editItem, ...form })
+    else          await addTeacher(form)
     setModal(false)
   }
 
@@ -253,7 +373,7 @@ function TeachersTab() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {filtered.length === 0 && <tr><td colSpan={6} className="px-5 py-16 text-center"><EmptyState /></td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={4} className="px-5 py-16 text-center"><EmptyState /></td></tr>}
             {filtered.map(t => (
               <tr key={t.id} className="hover:bg-gray-50/50 transition-colors">
                 <td className="px-5 py-4">
@@ -262,13 +382,12 @@ function TeachersTab() {
                     <span className="font-medium text-gray-800">{t.name}</span>
                   </div>
                 </td>
-                <td className="px-5 py-4 text-sm text-gray-500">{t.program}</td>
+                <td className="px-5 py-4 text-sm text-gray-500">{t.program || '—'}</td>
                 <td className="px-5 py-4 text-sm text-gray-500 font-mono">{t.phone}</td>
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-2">
                     <button onClick={() => openEdit(t)} className="p-2 text-yellow-600 rounded-xl hover:text-teal-600 hover:bg-teal-50 transition-all"><Pencil size={16}/></button>
                     <button onClick={() => setConfirm({ id: t.id, name: t.name })} className="p-2 text-red-500 rounded-xl hover:bg-red-50 transition-all"><Trash2 size={16}/></button>
-                    
                   </div>
                 </td>
               </tr>
@@ -281,47 +400,38 @@ function TeachersTab() {
         <Modal
           title={
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-teal-50 text-teal-600">
-                {editItem ? <Pencil size={20}/> : <Plus size={20}/>}
-              </div>
-              <span className="text-xl font-bold text-gray-800">
-                {editItem ? 'تعديل المعلم' : 'إضافة معلم جديد'}
-              </span>
+              <div className="p-2 rounded-xl bg-teal-50 text-teal-600">{editItem ? <Pencil size={20}/> : <Plus size={20}/>}</div>
+              <span className="text-xl font-bold text-gray-800">{editItem ? 'تعديل المعلم' : 'إضافة معلم جديد'}</span>
             </div>
           }
-          onClose={() => setModal(false)}
-          wide
-        >
+          onClose={() => setModal(false)} wide>
           <div className="flex flex-col gap-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">الاسم <span className="text-red-400">*</span></label>
-                <input className={inputClass} placeholder="الشيخ ..." value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} />
+                <input className={inputClass} placeholder="الشيخ ..." value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} />
               </div>
               <div className="w-full">
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">رقم الهاتف <span className="text-red-400">*</span></label>
-              <PhoneInput
-                country={'eg'}
-                value={form.phone}
-                onChange={phone => setForm(p=>({...p,phone}))}
-                inputClass={`w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all ${form.phone ? 'text-gray-700' : 'text-gray-400'}`}
-              />
+                <PhoneInput
+                  country={'eg'}
+                  value={form.phone}
+                  onChange={phone => setForm(p => ({ ...p, phone }))} 
+                  inputClass="w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all"
+                />
               </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">البرنامج</label>
-                <select className={inputClass} value={form.program} onChange={e=>setForm(p=>({...p,program:e.target.value}))}>
+                <select className={inputClass} value={form.program} onChange={e => setForm(p => ({ ...p, program: e.target.value }))}>
                   <option value="">اختر البرنامج</option>
-                  {programs?.map(p => (
+                  {programs?.filter(p => !p.isDeleted).map(p => (
                     <option key={p.id} value={p.name}>{p.name}</option>
                   ))}
                 </select>
               </div>
-              
             </div>
             <div className="flex justify-end gap-3 mt-2 pt-2">
-              <button className="px-5 py-2.5 border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all text-sm" onClick={()=>setModal(false)}>إلغاء</button>
+              <button className="px-5 py-2.5 border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all text-sm" onClick={() => setModal(false)}>إلغاء</button>
               <button className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl shadow-sm hover:shadow-md transition-all text-sm font-medium" onClick={save}>
                 {editItem ? '✓ حفظ التعديل' : <><Plus size={15}/> إضافة</>}
               </button>
@@ -330,12 +440,11 @@ function TeachersTab() {
         </Modal>
       )}
 
-
       {confirm && (
         <ConfirmDialog
           message={`هل تريد حذف المعلم "${confirm.name}"؟`}
           danger
-          onConfirm={() => { deleteTeacher(confirm.id); setConfirm(null) }}
+          onConfirm={async () => { await deleteTeacher(confirm.id); setConfirm(null) }}
           onCancel={() => setConfirm(null)}
         />
       )}
@@ -344,24 +453,35 @@ function TeachersTab() {
 }
 // ─── Programs Tab ─────────────────────────────────────────────────────────────
 function ProgramsTab() {
-  const { programs, students, addProgram, updateProgram, deleteProgram } = useApp()
-  const [search, setSearch]          = useState('')
-  const [modalOpen, setModal]        = useState(false)
-  const [editItem, setEditItem]      = useState(null)
-  const [confirm, setConfirm]        = useState(null)
-  const [form, setForm]              = useState({ name: '' })
+  const { programs, programsLoading, programsError, addProgram, updateProgram, deleteProgram } = useApp()
+  const [search, setSearch]           = useState('')
+  const [modalOpen, setModal]         = useState(false)
+  const [editItem, setEditItem]       = useState(null)
+  const [confirm, setConfirm]         = useState(null)
+  const [form, setForm]               = useState({ name: '', description: '', image: '' })
+  const [imagePreview, setImagePreview] = useState(null)
 
-  const filtered = programs?.filter(t => t.name.includes(search))
-  const openAdd  = () => { setEditItem(null); setForm({ name: '' }); setModal(true) }
-  const openEdit = t  => { setEditItem(t); setForm({ name: t.name }); setModal(true) }
-  const save = () => {
-    if (editItem) updateProgram({ ...editItem, ...form })
-    else          addProgram(form)
-    setModal(false)
+  if (programsLoading) return <div className="flex items-center justify-center py-20 text-gray-400"><div className="animate-spin w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full ml-2"/>جاري التحميل...</div>
+  if (programsError)   return <div className="text-center py-20 text-red-400">⚠️ {programsError}</div>
+
+  const filtered = programs?.filter(p => !p.isDeleted && p.name.includes(search))
+
+  const openAdd  = () => { setEditItem(null); setForm({ name: '', description: '', image: '' }); setImagePreview(null); setModal(true) }
+  const openEdit = t  => { setEditItem(t); setForm({ name: t.name, description: t.description || '', image: t.image || '' }); setImagePreview(t.image || null); setModal(true) }
+
+  const handleImageChange = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onloadend = () => { setImagePreview(reader.result); setForm(p => ({ ...p, image: reader.result })) }
+    reader.readAsDataURL(file)
   }
 
-  console.log(programs);
-  
+  const save = async () => {
+    if (editItem) await updateProgram({ ...editItem, ...form })
+    else          await addProgram(form)
+    setModal(false)
+  }
 
   return (
     <div className="space-y-5">
@@ -382,26 +502,31 @@ function ProgramsTab() {
         <table className="w-full">
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-100">
-              {['الاسم','إجراء'].map(h => (
+              {['البرنامج','الوصف','إجراء'].map(h => (
                 <th key={h} className="px-5 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {filtered?.length === 0 && <tr><td colSpan={6} className="px-5 py-16 text-center"><EmptyState /></td></tr>}
+            {filtered?.length === 0 && <tr><td colSpan={3} className="px-5 py-16 text-center"><EmptyState /></td></tr>}
             {filtered?.map(t => (
               <tr key={t.id} className="hover:bg-gray-50/50 transition-colors">
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-teal-50 flex items-center justify-center text-sm font-bold text-teal-700">{t.name.charAt(0)}</div>
+                    {t.image
+                      ? <img src={t.image} alt={t.name} className="w-10 h-10 rounded-xl object-cover flex-shrink-0 border border-gray-100"/>
+                      : <div className="w-10 h-10 rounded-xl bg-teal-50 flex items-center justify-center text-sm font-bold text-teal-700 flex-shrink-0">{t.name.charAt(0)}</div>
+                    }
                     <span className="font-medium text-gray-800">{t.name}</span>
                   </div>
+                </td>
+                <td className="px-5 py-4 text-sm text-gray-500 max-w-[300px]">
+                  <p className="line-clamp-2">{t.description || '—'}</p>
                 </td>
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-2">
                     <button onClick={() => openEdit(t)} className="p-2 text-yellow-600 rounded-xl hover:text-teal-600 hover:bg-teal-50 transition-all"><Pencil size={16}/></button>
                     <button onClick={() => setConfirm({ id: t.id, name: t.name })} className="p-2 text-red-500 rounded-xl hover:bg-red-50 transition-all"><Trash2 size={16}/></button>
-                    
                   </div>
                 </td>
               </tr>
@@ -414,25 +539,45 @@ function ProgramsTab() {
         <Modal
           title={
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-teal-50 text-teal-600">
-                {editItem ? <Pencil size={20}/> : <Plus size={20}/>}
-              </div>
-              <span className="text-xl font-bold text-gray-800">
-                {editItem ? 'تعديل البرنامج' : 'إضافة برنامج جديد'}
-              </span>
+              <div className="p-2 rounded-xl bg-teal-50 text-teal-600">{editItem ? <Pencil size={20}/> : <Plus size={20}/>}</div>
+              <span className="text-xl font-bold text-gray-800">{editItem ? 'تعديل البرنامج' : 'إضافة برنامج جديد'}</span>
             </div>
           }
-          onClose={() => setModal(false)}
-          wide
-        >
+          onClose={() => setModal(false)} wide>
           <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-3">
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5"> اسم البرنامج <span className="text-red-400">*</span></label>
-                <input className={inputClass} placeholder="البرنامج ..." value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} />
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-2">صورة البرنامج</label>
+              <div className="flex items-center gap-4">
+                {imagePreview
+                  ? <img src={imagePreview} alt="preview" className="w-20 h-20 rounded-2xl object-cover border border-gray-200 shadow-sm flex-shrink-0"/>
+                  : <div className="w-20 h-20 rounded-2xl bg-gray-100 flex items-center justify-center flex-shrink-0"><BookOpen size={28} className="text-gray-300"/></div>
+                }
+                <div className="flex-1">
+                  <label className="flex items-center justify-center gap-2 cursor-pointer border-[1.5px] border-dashed border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-500 hover:border-teal-400 hover:text-teal-600 hover:bg-teal-50 transition-all">
+                    <Plus size={15}/> {imagePreview ? 'تغيير الصورة' : 'رفع صورة'}
+                    <input type="file" accept="image/*" className="hidden" onChange={handleImageChange}/>
+                  </label>
+                  {imagePreview && (
+                    <button onClick={() => { setImagePreview(null); setForm(p => ({ ...p, image: '' })) }}
+                      className="mt-2 text-xs text-red-400 hover:text-red-600 transition-all">
+                      ✕ حذف الصورة
+                    </button>
+                  )}
+                </div>
               </div>
-                          
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1.5">اسم البرنامج <span className="text-red-400">*</span></label>
+              <input className={inputClass} placeholder="مثال: برنامج الحفظ..." value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}/>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1.5">وصف البرنامج</label>
+              <textarea rows={3} placeholder="اكتب وصفاً مختصراً للبرنامج..."
+                className="w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none transition-all resize-none"
+                value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))}/>
+            </div>
             <div className="flex justify-end gap-3 mt-2 pt-2">
-              <button className="px-5 py-2.5 border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all text-sm" onClick={()=>setModal(false)}>إلغاء</button>
+              <button className="px-5 py-2.5 border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all text-sm" onClick={() => setModal(false)}>إلغاء</button>
               <button className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl shadow-sm hover:shadow-md transition-all text-sm font-medium" onClick={save}>
                 {editItem ? '✓ حفظ التعديل' : <><Plus size={15}/> إضافة</>}
               </button>
@@ -445,7 +590,7 @@ function ProgramsTab() {
         <ConfirmDialog
           message={`هل تريد حذف البرنامج "${confirm.name}"؟`}
           danger
-          onConfirm={() => { deleteProgram(confirm.id); setConfirm(null) }}
+          onConfirm={async () => { await deleteProgram({ id: confirm.id }); setConfirm(null) }}
           onCancel={() => setConfirm(null)}
         />
       )}
@@ -464,344 +609,250 @@ const emptyForm = {
 const emptySession = { type: 'trial', dates: [{ date: '', time: '' }] }
 
 function StudentsTab() {
-const { students, teachers, halaqas, programs, addStudent, updateStudent, deleteStudent } = useApp()
-  const [showPostpone, setShowPostpone] = useState(false)
-  const [search, setSearch]             = useState('')
-  const [filterStatus, setFilterStatus]   = useState('all')
-  const [filterProgram, setFilterProgram] = useState('all')
-  const [filterTeacher, setFilterTeacher] = useState('all')
-  const [modalOpen, setModal]       = useState(false)
-  const [activeTab, setActiveTab]   = useState('info')
-  const [editItem, setEditItem]     = useState(null)
-  const [confirm, setConfirm]       = useState(null)
-  const [scheduleModal, setScheduleModal] = useState(null)
-  const [form, setForm]             = useState(emptyForm)
-  const [sessions, setSessions]     = useState([])
-const [filterMonth, setFilterMonth] = useState(null)
+  const { 
+    sessions, sessionsLoading, sessionsError,
+    teachers, programs,
+    addSession, updateSession, deleteSession,
+  } = useApp()
+
+  const [showPostpone, setShowPostpone]     = useState(false)
+  const [search, setSearch]                 = useState('')
+  const [filterStatus, setFilterStatus]     = useState('all')
+  const [filterProgram, setFilterProgram]   = useState('all')
+  const [filterTeacher, setFilterTeacher]   = useState('all')
+  const [filterMonth, setFilterMonth]       = useState(null)
+  const [modalOpen, setModal]               = useState(false)
+  const [editItem, setEditItem]             = useState(null)
+  const [confirm, setConfirm]               = useState(null)
+  const [form, setForm]                     = useState({})
+  const [saving, setSaving]                 = useState(false)
+
+  if (sessionsLoading) return (
+    <div className="flex items-center justify-center py-20 text-gray-400">
+      <div className="animate-spin w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full ml-2"/>
+      جاري التحميل...
+    </div>
+  )
+  if (sessionsError) return <div className="text-center py-20 text-red-400">⚠️ {sessionsError}</div>
 
   const statusOpts = [
-    { value: 'all', label: 'الكل' }, { value: 'active', label: 'نشط' },
-    { value: 'trial', label: 'تجريبي' }, { value: 'onhold', label: 'موقوف' },
+    { value: 'all',       label: 'الكل' },
+    { value: 'active',    label: 'نشط' },
+    { value: 'trial',     label: 'تجريبي' },
+    { value: 'paused',    label: 'متوقف' },
     { value: 'cancelled', label: 'ملغي' },
   ]
 
-  const postponeCount = students.filter(s => s.postponeStatus === 'pending').length
+  const filtered = sessions.filter(s => {
+    if (s.isDeleted) return false
+    const matchSearch  = s.studentName?.includes(search) || (s.studentPhone || '').includes(search)
+    const matchStatus  = filterStatus  === 'all' || s.status   === filterStatus
+    const matchProgram = filterProgram === 'all' || s.program  === filterProgram
+    const matchTeacher = filterTeacher === 'all' || s.teacherId === filterTeacher
+    const matchMonth   = !filterMonth || (() => {
+      const date = s.trialDate || s.regularDates?.[0]?.date
+      if (!date) return false
+      const d = new Date(date)
+      return d.getMonth() === filterMonth.month && d.getFullYear() === filterMonth.year
+    })()
+    return matchSearch && matchStatus && matchProgram && matchTeacher && matchMonth
+  })
 
-const filtered = (showPostpone
-  ? students.filter(s => s.postponeStatus === 'pending')
-  : students.filter(s => {
-      const matchSearch  = s.name.includes(search) || (s.phone || '').includes(search)
-      const matchStatus  = filterStatus  === 'all' || s.status  === filterStatus
-      const matchProgram = filterProgram === 'all' || s.program === filterProgram
-      const matchTeacher = filterTeacher === 'all' || String(s.teacherId) === filterTeacher
-      const matchMonth   = !filterMonth || s.sessions?.some(sess =>
-        sess.dates?.some(d => d.date &&
-          new Date(d.date).getMonth()    === filterMonth.month &&
-          new Date(d.date).getFullYear() === filterMonth.year)
-      )
-      return matchSearch && matchStatus && matchProgram && matchTeacher && matchMonth
+  const openAdd = () => {
+    setEditItem(null)
+    setForm({
+      name: '', phone: '', country: '', teacherId: '',
+      program: '', status: 'trial', contactMethod: '',
+      notes: '', trialDate: '', trialTime: '',
+      regularDates: [{ day: '', time: '', teacherTime: '', timezone: 'Africa/Cairo' }],
+      pauseType: '', pauseUntil: '', _hasBeenActive: false,
     })
-)
-
-  const openAdd  = () => { setEditItem(null); setForm(emptyForm); setSessions([]); setActiveTab('info'); setModal(true) }
-  const openEdit = s  => { setEditItem(s); setForm({ name: s.name, phone: s.phone || '', teacherId: s.teacherId, program: s.program || '', status: s.status }); setSessions(s.sessions || []); setActiveTab('info'); setModal(true) }
-  const addSessionRow = () => setSessions(p => [...p, { ...emptySession, id: Date.now() }])
-  const removeSession = (idx) => setSessions(p => p.filter((_, i) => i !== idx))
-  const updateSessionField = (idx, field, value) => setSessions(p => p.map((s, i) => i === idx ? { ...s, [field]: value } : s))
-  const updateSessionDate = (idx, dateIdx, field, value) => {
-    setSessions(p => p.map((s, i) => {
-      if (i !== idx) return s
-      const dates = [...(s.dates || [])]
-      dates[dateIdx] = { ...dates[dateIdx], [field]: value }
-      return { ...s, dates }
-    }))
-  }
-  const addDateRow = (idx) => setSessions(p => p.map((s, i) => i === idx ? { ...s, dates: [...(s.dates || []), { date: '', time: '' }] } : s))
-  const save = () => {
-    const payload = { ...form, teacherId: Number(form.teacherId), sessions, id: editItem?.id || Date.now(), attendance: editItem?.attendance ?? null }
-    if (editItem) updateStudent({ ...editItem, ...payload })
-    else addStudent(payload)
-    setModal(false)
+    setModal(true)
   }
 
-  const typeLabel = { trial: 'تجريبي', makeup: 'تعويض', regular: 'عادي' }
-  const typeColor = { trial: 'bg-amber-50 text-amber-700 border-amber-200', makeup: 'bg-purple-50 text-purple-700 border-purple-200', regular: 'bg-blue-50 text-blue-700 border-blue-200' }
+  const openEdit = s => {
+    setEditItem(s)
+    setForm({
+      name:           s.studentName    || '',
+      phone:          s.studentPhone   || '',
+      country:        s.country        || '',
+      teacherId:      s.teacherId      || '',
+      program:        s.program        || '',
+      status:         s.status,
+      contactMethod:  s.contactMethod  || '',
+      notes:          s.notes          || '',
+      trialDate:      s.trialDate      || '',
+      trialTime:      s.trialTime      || '',
+      regularDates:   s.regularDates   || [{ day: '', time: '', teacherTime: '', timezone: 'Africa/Cairo' }],
+      pauseType:      s.pauseType      || '',
+      pauseUntil:     s.pauseUntil     || '',
+      _hasBeenActive: ['active','paused','cancelled'].includes(s.status),
+    })
+    setModal(true)
+  }
+
+  const save = async () => {
+    if (saving) return
+    try {
+      setSaving(true)
+      const teacher = teachers.find(t => t.id === form.teacherId)
+      if (editItem) {
+        await updateSession(editItem.id, { ...form, makeup: editItem.makeup }, teacher?.name || '')
+      } else {
+        await addSession(form, teacher?.name || '', null, '')
+      }
+      setModal(false)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="space-y-5">
 
-      {/* Search + Add + Postpone Button */}
+      {/* Search + Buttons */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1">
           <svg className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
           </svg>
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="بحث باسم أو هاتف..."
-            className="w-full pr-12 pl-4 py-3 bg-white border border-gray-200 rounded-2xl shadow-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-gray-700" />
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="بحث باسم أو هاتف..."
+            className="w-full pr-12 pl-4 py-3 bg-white border border-gray-200 rounded-2xl shadow-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-gray-700"/>
         </div>
-
-
-
-        {/* زرار طلبات التأجيل */}
-        <button
-          onClick={() => setShowPostpone(p => !p)}
-          className={`relative flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold border transition-all ${
-            showPostpone
-              ? 'bg-amber-50 border-amber-300 text-amber-700 shadow-sm'
-              : 'bg-white border-gray-200 text-gray-600 hover:border-amber-200 hover:text-amber-600'
-          }`}>
-          طلبات التأجيل
-          {postponeCount > 0 && (
-            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-xs font-bold">
-              {postponeCount}
-            </span>
-          )}
-        </button>
-
-        <button onClick={openAdd} className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl shadow-md hover:shadow-lg transition-all font-medium whitespace-nowrap">
+        <button onClick={openAdd}
+          className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl shadow-md hover:shadow-lg transition-all font-medium whitespace-nowrap">
           <Plus size={18}/> إضافة طالب
         </button>
       </div>
 
-      {/* Filters — تختفي لما يكون فلتر التأجيل شغال */}
-      {!showPostpone && (
-        <div className="flex flex-wrap items-center gap-3">
-          <Filter size={14} className="text-gray-400"/>
-          {[
-            { label: 'الحالة',   value: filterStatus,  onChange: setFilterStatus,  options: statusOpts },
-            { label: 'البرنامج', value: filterProgram, onChange: setFilterProgram, options: [{ value: 'all', label: 'كل البرامج' },  ...PROGRAMS.map(p => ({ value: p.name, label: p.name }))] },
-            { label: 'المعلم',   value: filterTeacher, onChange: setFilterTeacher, options: [{ value: 'all', label: 'كل المعلمين' }, ...teachers.map(t => ({ value: String(t.id), label: t.name.replace('الشيخ ', '') }))] },
-            
-          ].map(f => (
-            <div key={f.label} className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-gray-500">{f.label}:</span>
-              <select value={f.value} onChange={e => f.onChange(e.target.value)}
-                className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none shadow-sm min-w-[130px]">
-                {f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-          ))}
-        <MonthPicker value={filterMonth} onChange={setFilterMonth} />
-
-          {(filterStatus !== 'all' || filterProgram !== 'all' || filterTeacher !== 'all') && (
-            <button onClick={() => { setFilterStatus('all'); setFilterProgram('all'); setFilterTeacher('all'); setFilterMonth(null) }}
-              className="text-xs text-red-400 hover:text-red-600 px-3 py-2 rounded-xl hover:bg-red-50 transition-all font-medium">
-              ✕ مسح الفلاتر
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* إشعار لما يكون فلتر التأجيل شغال */}
-      {showPostpone && (
-        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-amber-700 font-medium w-fit">
-          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"/>
-          يعرض {postponeCount} طالب لديهم طلب تأجيل معلق
-        </div>
-      )}
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-3">
+        <Filter size={14} className="text-gray-400"/>
+        {[
+          { label: 'الحالة',   value: filterStatus,  onChange: setFilterStatus,  options: statusOpts },
+          { label: 'البرنامج', value: filterProgram, onChange: setFilterProgram,
+            options: [{ value: 'all', label: 'كل البرامج' }, ...programs.filter(p => !p.isDeleted).map(p => ({ value: p.name, label: p.name }))] },
+          { label: 'المعلم',   value: filterTeacher, onChange: setFilterTeacher,
+            options: [{ value: 'all', label: 'كل المعلمين' }, ...teachers.filter(t => !t.isDeleted).map(t => ({ value: t.id, label: t.name.replace('الشيخ ', '') }))] },
+        ].map(f => (
+          <div key={f.label} className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-gray-500">{f.label}:</span>
+            <select value={f.value} onChange={e => f.onChange(e.target.value)}
+              className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm min-w-[130px]">
+              {f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+        ))}
+        <MonthPicker value={filterMonth} onChange={setFilterMonth}/>
+        {(filterStatus !== 'all' || filterProgram !== 'all' || filterTeacher !== 'all' || filterMonth) && (
+          <button onClick={() => { setFilterStatus('all'); setFilterProgram('all'); setFilterTeacher('all'); setFilterMonth(null) }}
+            className="text-xs text-red-400 hover:text-red-600 px-3 py-2 rounded-xl hover:bg-red-50 transition-all font-medium">
+            ✕ مسح الفلاتر
+          </button>
+        )}
+      </div>
 
       {/* Table */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <table className="w-full">
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-100">
-              {['الاسم', 'الهاتف', 'المعلم', 'البرنامج', 'الحلقات', 'الحالة', 'إجراء'].map(h => (
+              {['رقم الحلقة','الاسم','الهاتف','البلد','وسيلة التواصل','المعلم','البرنامج','الحالة','إجراء'].map(h => (
                 <th key={h} className="px-5 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {filtered.length === 0 && <tr><td colSpan={7} className="px-5 py-16 text-center"><EmptyState /></td></tr>}
-            {filtered.map(s => {
-              const teacher   = teachers.find(t => t.id === s.teacherId)
-              const sSessions = s.sessions || []
-              return (
-                <tr key={s.id} className={`transition-colors ${
-                  s.postponeStatus === 'pending' ? 'bg-amber-50/40 hover:bg-amber-50/70' : 'hover:bg-gray-50/50'
-                }`}>
-                  <td className="px-5 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold ${
-                        s.postponeStatus === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-teal-50 text-teal-700'
-                      }`}>{s.name.charAt(0)}</div>
-                      <div>
-                        <span className="font-medium text-gray-800">{s.name}</span>
-                        {s.postponeStatus === 'pending' && (
-                          <div className="text-xs text-amber-600 font-medium mt-0.5">⏳ طلب تأجيل</div>
-                        )}
-                      </div>
+            {filtered.length === 0 && (
+              <tr><td colSpan={9} className="px-5 py-16 text-center"><EmptyState/></td></tr>
+            )}
+            {filtered.map(s => (
+              <tr key={s.id} className="hover:bg-gray-50/50 transition-colors">
+                <td className="px-5 py-4">
+                  <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">
+                    #{s.sessionNumber}
+                  </span>
+                </td>
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-teal-50 flex items-center justify-center text-sm font-bold text-teal-700">
+                      {s.studentName?.charAt(0) || '؟'}
                     </div>
-                  </td>
-                  <td className="px-5 py-4 text-sm text-gray-500 font-mono">{s.phone || '—'}</td>
-                  <td className="px-5 py-4 text-sm text-gray-600">{teacher?.name?.replace('الشيخ ', '') || '—'}</td>
-                  <td className="px-5 py-4 text-sm text-gray-600">{s.program || '—'}</td>
-                  <td className="px-5 py-4">
-                    {sSessions.length > 0 ? (
-                      <button onClick={() => setScheduleModal(s)}
-                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-teal-200 text-teal-600 hover:bg-teal-50 font-semibold transition-all">
-                        <BookOpen size={13}/> {sSessions.length} حلقة
-                      </button>
-                    ) : <span className="text-gray-300 text-sm">—</span>}
-                  </td>
-                  <td className="px-5 py-4"><Badge status={s.status} /></td>
-                  <td className="px-5 py-4">
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => openEdit(s)} className="p-2 text-yellow-600 rounded-xl hover:text-teal-600 hover:bg-teal-50 transition-all"><Pencil size={16}/></button>
-                      <button onClick={() => setConfirm({ id: s.id, name: s.name })} className="p-2 text-red-500 rounded-xl hover:bg-red-50 transition-all"><Trash2 size={16}/></button>
-                    </div>
-                  </td>
-                </tr>
-              )
-            })}
+                    <span className="font-medium text-gray-800">{s.studentName || '—'}</span>
+                  </div>
+                </td>
+                <td className="px-5 py-4 text-sm text-gray-500 font-mono">{s.studentPhone || '—'}</td>
+                <td className="px-5 py-4 text-sm text-gray-500">{s.country || '—'}</td>
+                <td className="px-5 py-4 text-sm text-gray-500">{s.contactMethod || '—'}</td>
+                <td className="px-5 py-4 text-sm text-gray-600">{s.teacherName?.replace('الشيخ ', '') || '—'}</td>
+                <td className="px-5 py-4 text-sm text-gray-600">{s.program || '—'}</td>
+                <td className="px-5 py-4"><Badge status={s.status}/></td>
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => openEdit(s)}
+                      className="p-2 text-yellow-600 rounded-xl hover:text-teal-600 hover:bg-teal-50 transition-all">
+                      <Pencil size={16}/>
+                    </button>
+                    <button onClick={() => setConfirm({ id: s.id, name: s.studentName })}
+                      className="p-2 text-red-500 rounded-xl hover:bg-red-50 transition-all">
+                      <Trash2 size={16}/>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
-      {/* Schedule Modal */}
-      {scheduleModal && (
-        <Modal title={<div className="flex items-center gap-3"><div className="p-2 rounded-xl bg-teal-50 text-teal-600"><BookOpen size={20}/></div><span className="text-xl font-bold text-gray-800">حلقات: {scheduleModal.name}</span></div>}
-          onClose={() => setScheduleModal(null)} wide>
-          <div className="flex flex-col gap-3">
-            {(scheduleModal.sessions || []).length === 0 && <div className="text-center py-8 text-gray-400 text-sm">لا توجد حلقات مسجلة</div>}
-            {(scheduleModal.sessions || []).map((sess, i) => (
-              <div key={i} className={`rounded-xl border p-4 ${typeColor[sess.type] || typeColor.trial}`}>
-                <span className="text-xs font-bold">{typeLabel[sess.type]}</span>
-                <div className="flex flex-col gap-1.5 mt-2">
-                  {(sess.dates || []).map((d, di) => (
-                    <div key={di} className="flex items-center gap-2 text-xs font-mono">{d.date} — {d.time}</div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Modal>
-      )}
-
-      {/* Add/Edit Modal */}
+      {/* Modal إضافة/تعديل */}
       {modalOpen && (
         <Modal
-          title={<div className="flex items-center gap-3"><div className="p-2 rounded-xl bg-teal-50 text-teal-600">{editItem ? <Pencil size={20}/> : <Plus size={20}/>}</div><span className="text-xl font-bold text-gray-800">{editItem ? 'تعديل بيانات الطالب' : 'إضافة طالب جديد'}</span></div>}
+          title={
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-teal-50 text-teal-600">
+                {editItem ? <Pencil size={20}/> : <Plus size={20}/>}
+              </div>
+              <span className="text-xl font-bold text-gray-800">
+                {editItem ? 'تعديل بيانات الطالب' : 'إضافة طالب جديد'}
+              </span>
+            </div>
+          }
           onClose={() => setModal(false)} wide>
 
-          <div className="flex gap-1 mb-5 bg-gray-100 p-1 rounded-xl w-fit">
-            {[{ id: 'info', label: 'البيانات' }, { id: 'sessions', label: 'الحلقات' }].map(t => (
-              <button key={t.id} onClick={() => setActiveTab(t.id)}
-                className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === t.id ? 'bg-white text-teal-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{t.label}</button>
-            ))}
-          </div>
-
-          {activeTab === 'info' && (
-            <div className="flex flex-col gap-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">الاسم <span className="text-red-400">*</span></label>
-                  <input className={inputClass} placeholder="اسم الطالب..." value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">رقم الهاتف</label>
-                  <PhoneInput country={'eg'} value={form.phone} onChange={phone => setForm(p => ({ ...p, phone }))}
-                    inputClass="w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">المعلم <span className="text-red-400">*</span></label>
-                  <select className={inputClass} value={form.teacherId} onChange={e => setForm(p => ({ ...p, teacherId: e.target.value }))}>
-                    <option value="">اختر معلماً...</option>
-                    {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">البرنامج</label>
-                  <select className={inputClass} value={form.program} onChange={e => setForm(p => ({ ...p, program: e.target.value }))}>
-                    <option value="">اختر برنامجاً...</option>
-                    {programs.map(pr => <option key={pr.id} value={pr.name}>{pr.name}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-2">حالة الطالب</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { value: 'trial',     label: 'تجريبي', color: 'bg-amber-400' },
-                    { value: 'active',    label: 'نشط',     color: 'bg-emerald-500' },
-                    { value: 'onhold',    label: 'موقوف',   color: 'bg-gray-400' },
-                    // { value: 'cancelled', label: 'ملغي',    color: 'bg-red-400' },
-                  ].map(opt => (
-                    <button key={opt.value} type="button" onClick={() => setForm(p => ({ ...p, status: opt.value }))}
-                      className={`border-[1.5px] rounded-xl py-2.5 text-center transition-all ${form.status === opt.value ? 'border-teal-500 bg-teal-50' : 'border-slate-200 bg-slate-50 hover:border-slate-300'}`}>
-                      <div className={`w-2 h-2 rounded-full mx-auto mb-1.5 ${opt.color}`}/>
-                      <span className={`text-xs font-semibold ${form.status === opt.value ? 'text-teal-700' : 'text-slate-500'}`}>{opt.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'sessions' && (
-            <div className="flex flex-col gap-4">
-              {sessions.length === 0 && <div className="text-center py-8 text-gray-400 text-sm">لا توجد حلقات مضافة بعد</div>}
-              {sessions.map((sess, idx) => (
-                <div key={idx} className="border border-gray-200 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex gap-2">
-                      {[{ value: 'trial', label: 'تجريبي', color: 'bg-amber-400' }, { value: 'makeup', label: 'تعويض', color: 'bg-purple-400' }, { value: 'regular', label: 'عادي', color: 'bg-blue-400' }].map(opt => (
-                        <button key={opt.value} type="button" onClick={() => updateSessionField(idx, 'type', opt.value)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${sess.type === opt.value ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-slate-200 bg-slate-50 text-slate-500'}`}>
-                          <div className={`w-2 h-2 rounded-full ${opt.color}`}/>{opt.label}
-                        </button>
-                      ))}
-                    </div>
-                    <button onClick={() => removeSession(idx)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={14}/></button>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    {(sess.dates || []).map((d, di) => (
-                      <div key={di} className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-xs text-slate-400 mb-1">{sess.type === 'regular' ? 'اليوم' : 'التاريخ'}</label>
-                          {sess.type === 'regular' ? (
-                            <select className={inputClass} value={d.date} onChange={e => updateSessionDate(idx, di, 'date', e.target.value)}>
-                              <option value="">اختر اليوم...</option>
-                              {['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'].map(day => <option key={day} value={day}>{day}</option>)}
-                            </select>
-                          ) : (
-                            <input type="date" className={inputClass} value={d.date} onChange={e => updateSessionDate(idx, di, 'date', e.target.value)} />
-                          )}
-                        </div>
-                        <div>
-                          <label className="block text-xs text-slate-400 mb-1">الوقت</label>
-                          <input type="time" className={inputClass} value={d.time} onChange={e => updateSessionDate(idx, di, 'time', e.target.value)} />
-                        </div>
-                      </div>
-                    ))}
-                    <button type="button" onClick={() => addDateRow(idx)}
-                      className="flex items-center justify-center gap-1.5 border border-dashed border-slate-300 rounded-xl px-4 py-2 text-xs text-slate-500 hover:border-teal-400 hover:text-teal-600 transition-all">
-                      <Plus size={13}/> إضافة موعد آخر
-                    </button>
-                  </div>
-                </div>
-              ))}
-              <button type="button" onClick={addSessionRow}
-                className="flex items-center justify-center gap-2 border-2 border-dashed border-teal-300 rounded-xl px-4 py-3 text-sm text-teal-600 hover:bg-teal-50 font-semibold transition-all">
-                <Plus size={15}/> إضافة حلقة
-              </button>
-            </div>
-          )}
+          <StudentSessionForm
+            form={form} setForm={setForm}
+            teachers={teachers.filter(t => !t.isDeleted)}
+            programs={programs.filter(p => !p.isDeleted)}
+            editItem={editItem}
+          />
 
           <div className="flex justify-end gap-3 mt-6 pt-2">
-            <button className="px-5 py-2.5 border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all text-sm" onClick={() => setModal(false)}>إلغاء</button>
-            <button className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl shadow-sm hover:shadow-md transition-all text-sm font-medium" onClick={save}>
-              {editItem ? '✓ حفظ التعديل' : <><Plus size={15}/> إضافة</>}
+            <button onClick={() => setModal(false)}
+              className="px-5 py-2.5 border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all text-sm">
+              إلغاء
+            </button>
+            <button onClick={save} disabled={saving}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-sm font-medium transition-all ${
+                !saving ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:shadow-md' : 'bg-slate-300 cursor-not-allowed'
+              }`}>
+              {saving
+                ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/> جاري الحفظ...</>
+                : editItem ? '✓ حفظ التعديل' : <><Plus size={15}/> إضافة</>
+              }
             </button>
           </div>
         </Modal>
       )}
 
       {confirm && (
-        <ConfirmDialog message={`هل تريد حذف الطالب "${confirm.name}"؟`} danger
-          onConfirm={() => { deleteStudent(confirm.id); setConfirm(null) }}
-          onCancel={() => setConfirm(null)} />
+        <ConfirmDialog
+          message={`هل تريد حذف الطالب "${confirm.name}"؟`}
+          danger
+          onConfirm={async () => { await deleteSession(confirm.id); setConfirm(null) }}
+          onCancel={() => setConfirm(null)}
+        />
       )}
     </div>
   )
@@ -812,13 +863,13 @@ export default function AdminUsers() {
   const role = localStorage.getItem("role")
   
   const TABS = [
-    ...(role === 'admin' ? [{ id: 'supervisors', label: 'المشرفون', icon: UserCog }] : []),
+    ...[{ id: 'supervisors', label: 'المشرفون', icon: UserCog }],
     { id: 'teachers', label: 'المعلمون', icon: GraduationCap },
     { id: 'programs', label: 'البرامج',  icon: BookOpen },
     { id: 'students', label: 'الطلاب',  icon: Users },
   ]
 
-  const [tab, setTab] = useState(role === 'admin' ? 'supervisors' : 'teachers')
+  const [tab, setTab] = useState('supervisors')
 
   return (
     <div dir="rtl" className="space-y-8 font-sans">

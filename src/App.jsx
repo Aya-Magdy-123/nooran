@@ -6,12 +6,13 @@ import { AppProvider } from './context/AppContext'
 import AdminLayout        from './pages/admin/AdminLayout'
 import AdminOverview      from './pages/admin/AdminOverview'
 import AdminUsers         from './pages/admin/AdminUsers'
-// import AdminSessions      from './pages/admin/AdminSessions'
+import AdminSessions      from './pages/admin/AdminSessions'
 import SupervisorLayout   from './pages/supervisor/SupervisorLayout'
 // import SupervisorStudents from './pages/supervisor/SupervisorStudents'
 import SupervisorPostpone from './pages/supervisor/SupervisorPostpone'
 import SupervisorHalaqas from './pages/supervisor/SupervisorHalaqas'
 import Login from './pages/login/Login'
+import Supervisorsessions from './pages/supervisor/Supervisorsessions'
 
 export default function App() {
   return (
@@ -25,7 +26,7 @@ export default function App() {
         <Route path="/admin" element={<AdminLayout />}>
           <Route index         element={<AdminOverview />} />
           <Route path="users"    element={<AdminUsers />} />
-          {/* <Route path="sessions" element={<AdminSessions />} /> */}
+          <Route path="sessions" element={<AdminSessions />} />
         </Route>
 
         {/* Supervisor */}
@@ -33,6 +34,7 @@ export default function App() {
           <Route index             element={<SupervisorHalaqas />} />
           <Route path="students"   element={<AdminUsers />} />
           <Route path="postpone"   element={<SupervisorPostpone />} />
+          <Route path="sessions"   element={<Supervisorsessions />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/login" />} />

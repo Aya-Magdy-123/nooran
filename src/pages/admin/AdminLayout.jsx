@@ -8,7 +8,7 @@ const LINKS = [
   { to: '/admin',          label: 'الداشبورد',        icon: LayoutDashboard, end: true },
   { divider: true, label: 'الإدارة' },
   { to: '/admin/users',    label: 'إدارة المستخدمين', icon: Users },
-  // { to: '/admin/sessions', label: 'الحصص والحلقات',   icon: CalendarDays },
+  { to: '/admin/sessions', label: ' الحلقات',   icon: CalendarDays },
 ]
 
 export default function AdminLayout() {

@@ -167,7 +167,7 @@ const EMPTY_FORM = {
   pauseType: '', pauseUntil: '', notes: '', flagged: false,
 }
 
-export default function AdminSessions() {
+export default function Supervisorsessions() {
   const {
     sessions, sessionsLoading, sessionsError,
     teachers, supervisors, programs,
@@ -463,7 +463,7 @@ export default function AdminSessions() {
                       <div className="flex flex-col gap-0.5">
                         <div className="flex items-center gap-1.5">
                           <span className="text-xs text-slate-700 font-mono">{dateDisplay}</span>
-                          {/* {isToday && <span className="text-xs bg-teal-500 text-white px-1.5 py-0.5 rounded-md font-semibold">اليوم</span>} */}
+                          {isToday && <span className="text-xs bg-teal-500 text-white px-1.5 py-0.5 rounded-md font-semibold">اليوم</span>}
                         </div>
                         {timeDisplay && <span className="text-xs text-slate-500 font-mono">{timeDisplay}</span>}
                       </div>

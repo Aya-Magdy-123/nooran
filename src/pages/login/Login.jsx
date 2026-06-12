@@ -11,78 +11,78 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  // const handleLogin = async (e) => {
-  //   e.preventDefault();
-  //   setLoading(true);
-  //   setError("");
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
 
-  //   try {
-  //     const userCredential = await signInWithEmailAndPassword(auth, email, password);
-  //     const user = userCredential.user;
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
 
-  //     // جيب الـ token
-  //     const token = await user.getIdToken();
+      // جيب الـ token
+      const token = await user.getIdToken();
 
-  //     // جيب بيانات المستخدم من الباك عشان تعرف الـ role
-  //     const res = await fetch(`http://localhost:5000/api/auth/me`, {
-  //       headers: { Authorization: `Bearer ${token}` },
-  //     });
-  //     const data = await res.json();
+      // جيب بيانات المستخدم من الباك عشان تعرف الـ role
+      const res = await fetch(`http://localhost:5000/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
 
-  //     // خزّن في localStorage
-  //     localStorage.setItem("token", token);
-  //     localStorage.setItem("role", data.role);
-  //     localStorage.setItem("uid", user.uid);
-  //     localStorage.setItem("name", data.name);
+      // خزّن في localStorage
+      localStorage.setItem("token", token);
+      localStorage.setItem("role", data.role);
+      localStorage.setItem("uid", user.uid);
+      localStorage.setItem("name", data.name);
 
-  //     // وجّه على حسب الـ role
-  //     if (data.role === "admin") {
-  //       navigate("/admin");
-  //     } else if (data.role === "supervisor") {
-  //       navigate("/supervisor");
-  //     }
-  //   } catch (err) {
-  //   console.log(err.code, err.message);
-  //     setError("الإيميل أو كلمة المرور غلط");
-  //   } finally {
-  //     setLoading(false);
-  //   }
-  // };
-
-  const DUMMY_USERS = {
-  "admin@zad.com": { password: "123456", role: "admin", name: "أدمن نوران", uid: "admin-001" },
-  "supervisor@zad.com": { password: "123456", role: "supervisor", name: "مشرف نوران", uid: "sup-001" },
-}
-
-const handleLogin = async (e) => {
-  e.preventDefault();
-  setLoading(true);
-  setError("");
-
-  try {
-    const user = DUMMY_USERS[email];
-
-    if (!user || user.password !== password) {
+      // وجّه على حسب الـ role
+      if (data.role === "admin") {
+        navigate("/admin");
+      } else if (data.role === "supervisor") {
+        navigate("/supervisor");
+      }
+    } catch (err) {
+    console.log(err.code, err.message);
       setError("الإيميل أو كلمة المرور غلط");
-      return;
+    } finally {
+      setLoading(false);
     }
+  };
 
-    localStorage.setItem("token", "dummy-token");
-    localStorage.setItem("role", user.role);
-    localStorage.setItem("uid", user.uid);
-    localStorage.setItem("name", user.name);
+//   const DUMMY_USERS = {
+//   "admin@zad.com": { password: "123456", role: "admin", name: "أدمن نوران", uid: "admin-001" },
+//   "supervisor@zad.com": { password: "123456", role: "supervisor", name: "مشرف نوران", uid: "sup-001" },
+// }
 
-    if (user.role === "admin") {
-      navigate("/admin");
-    } else if (user.role === "supervisor") {
-      navigate("/supervisor");
-    }
-  } catch (err) {
-    setError("حصل خطأ");
-  } finally {
-    setLoading(false);
-  }
-};
+// const handleLogin = async (e) => {
+//   e.preventDefault();
+//   setLoading(true);
+//   setError("");
+
+//   try {
+//     const user = DUMMY_USERS[email];
+
+//     if (!user || user.password !== password) {
+//       setError("الإيميل أو كلمة المرور غلط");
+//       return;
+//     }
+
+//     localStorage.setItem("token", "dummy-token");
+//     localStorage.setItem("role", user.role);
+//     localStorage.setItem("uid", user.uid);
+//     localStorage.setItem("name", user.name);
+
+//     if (user.role === "admin") {
+//       navigate("/admin");
+//     } else if (user.role === "supervisor") {
+//       navigate("/supervisor");
+//     }
+//   } catch (err) {
+//     setError("حصل خطأ");
+//   } finally {
+//     setLoading(false);
+//   }
+// };
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
       <div className="bg-white px-6 py-4 rounded-xl shadow-md w-full max-w-md">

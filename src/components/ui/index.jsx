@@ -5,7 +5,7 @@ import { STATUS_LABELS, STATUS_BADGE } from '../../data/mockData'
 // ── Modal ───────────────────────────────────────────────────────────────────
 export function Modal({ title, onClose, children, wide }) {
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" >
       <div className={`modal-box ${wide ? 'max-w-3xl' : 'max-w-md'}`}>
         <div className="modal-header">
           <h3 className="text-base font-semibold text-brand-dark">{title}</h3>
@@ -23,14 +23,14 @@ export function ConfirmDialog({ message, onConfirm, onCancel, danger }) {
     <div className="modal-overlay">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
         <div className="flex items-start gap-4 mb-5">
-          <div className={`p-2 rounded-xl ${danger ? 'bg-red-50' : 'bg-amber-50'}`}>
-            <AlertTriangle size={20} className={danger ? 'text-red-600' : 'text-amber-600'} />
+          <div className={`p-2 rounded-xl ${danger ? 'bg-red-50' : 'bg-green-50'}`}>
+            <AlertTriangle size={20} className={danger ? 'text-red-600' : 'text-green-600'} />
           </div>
           <p className="text-sm text-gray-700 leading-relaxed mt-0.5">{message}</p>
         </div>
         <div className="flex justify-end gap-3">
           <button onClick={onCancel} className="btn-secondary">إلغاء</button>
-          <button onClick={onConfirm} className={danger ? 'btn-danger' : 'btn-primary'}>تأكيد</button>
+          <button onClick={onConfirm} className={danger ? 'btn-danger' : 'btn-success'}>تأكيد</button>
         </div>
       </div>
     </div>
