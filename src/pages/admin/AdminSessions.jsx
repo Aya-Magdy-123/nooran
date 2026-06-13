@@ -182,6 +182,8 @@ const totalPages = Math.ceil(sessionsTotal / PAGE_SIZE)
 
   const [confirm, setConfirm] = useState(null)
 
+  const [showPostpone, setShowPostpone] = useState(false)
+
   // ── Filters ──
   const filtered = useMemo(() => sessions.filter(s => {
     const date      = s.trialDate || (s.regularDates?.[0]?.day ? '' : '')
@@ -304,20 +306,35 @@ const totalPages = Math.ceil(sessionsTotal / PAGE_SIZE)
       </div>
 
       {/* Search + Add */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
-          <svg className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-          </svg>
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="بحث باسم الطالب أو رقم الحلقة..."
-            className="w-full pr-10 pl-4 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-slate-700 text-sm"/>
-        </div>
-        <button onClick={openAdd}
-          className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl shadow-sm hover:shadow-md transition-all font-medium text-sm whitespace-nowrap">
-          <Plus size={16}/> إضافة حلقة
-        </button>
-      </div>
+     
+<div className="flex items-center gap-3">
+  <div className="relative flex-1">
+    <svg className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+    </svg>
+    <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+      placeholder="بحث باسم الطالب أو رقم الحلقة..."
+      className="w-full pr-10 pl-4 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-slate-700 text-sm"/>
+  </div>
+
+  {/* ← زرار طلبات التأجيل */}
+  <button
+    onClick={() => setShowPostpone(p => !p)}
+    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border transition-all whitespace-nowrap ${
+      showPostpone
+        ? 'bg-orange-50 border-orange-300 text-orange-700'
+        : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+    }`}>
+    <Clock size={15}/>
+    طلبات التأجيل
+    <span className="bg-orange-100 text-orange-600 text-xs font-bold px-1.5 py-0.5 rounded-lg">0</span>
+  </button>
+
+  <button onClick={openAdd}
+    className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl shadow-sm hover:shadow-md transition-all font-medium text-sm whitespace-nowrap">
+    <Plus size={16}/> إضافة حلقة
+  </button>
+</div>
 
       {/* Filters */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
@@ -372,6 +389,17 @@ const totalPages = Math.ceil(sessionsTotal / PAGE_SIZE)
           <div className="mr-auto text-xs text-slate-400 font-medium">{filtered.length} حلقة</div>
         </div>
       </div>
+
+      {/* طلبات التأجيل */}
+{showPostpone && (
+  <div className="bg-white rounded-2xl border border-orange-100 shadow-sm p-12 text-center">
+    <div className="w-14 h-14 rounded-2xl bg-orange-50 flex items-center justify-center mx-auto mb-4">
+      <Clock size={24} className="text-orange-400"/>
+    </div>
+    <p className="text-slate-500 font-medium">لا يوجد طلبات تأجيل</p>
+    <p className="text-xs text-slate-400 mt-1">ستظهر هنا طلبات التأجيل عند وصولها</p>
+  </div>
+)}
 
       {/* Table */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
