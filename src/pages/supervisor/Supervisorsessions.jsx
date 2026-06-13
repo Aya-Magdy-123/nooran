@@ -1,623 +1,623 @@
-import { useState, useMemo } from 'react'
-import { Plus, Pencil, Trash2, Star, Filter, BookOpen, Clock, Calendar, User } from 'lucide-react'
-import { useApp } from '../../context/AppContext'
-import StudentSessionForm from '../../components/ui/StudentSessionForm'
+// import { useState, useMemo } from 'react'
+// import { Plus, Pencil, Trash2, Star, Filter, BookOpen, Clock, Calendar, User } from 'lucide-react'
+// import { useApp } from '../../context/AppContext'
+// import StudentSessionForm from '../../components/ui/StudentSessionForm'
 
-const DAYS_AR   = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']
-const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
+// const DAYS_AR   = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']
+// const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
 
-// const TIMEZONES = [
-//   { value: 'Africa/Cairo',        label: 'مصر (Cairo)' },
-//   { value: 'Asia/Riyadh',         label: 'السعودية' },
-//   { value: 'Asia/Dubai',          label: 'الإمارات' },
-//   { value: 'Asia/Kuwait',         label: 'الكويت' },
-//   { value: 'Africa/Tripoli',      label: 'ليبيا' },
-//   { value: 'Africa/Tunis',        label: 'تونس' },
-//   { value: 'Africa/Algiers',      label: 'الجزائر' },
-//   { value: 'Africa/Casablanca',   label: 'المغرب' },
-//   { value: 'Asia/Baghdad',        label: 'العراق' },
-//   { value: 'Asia/Amman',          label: 'الأردن' },
-//   { value: 'Asia/Beirut',         label: 'لبنان' },
-//   { value: 'Europe/London',       label: 'بريطانيا' },
-//   { value: 'America/New_York',    label: 'نيويورك' },
-//   { value: 'America/Los_Angeles', label: 'لوس أنجلوس' },
-// ]
+// // const TIMEZONES = [
+// //   { value: 'Africa/Cairo',        label: 'مصر (Cairo)' },
+// //   { value: 'Asia/Riyadh',         label: 'السعودية' },
+// //   { value: 'Asia/Dubai',          label: 'الإمارات' },
+// //   { value: 'Asia/Kuwait',         label: 'الكويت' },
+// //   { value: 'Africa/Tripoli',      label: 'ليبيا' },
+// //   { value: 'Africa/Tunis',        label: 'تونس' },
+// //   { value: 'Africa/Algiers',      label: 'الجزائر' },
+// //   { value: 'Africa/Casablanca',   label: 'المغرب' },
+// //   { value: 'Asia/Baghdad',        label: 'العراق' },
+// //   { value: 'Asia/Amman',          label: 'الأردن' },
+// //   { value: 'Asia/Beirut',         label: 'لبنان' },
+// //   { value: 'Europe/London',       label: 'بريطانيا' },
+// //   { value: 'America/New_York',    label: 'نيويورك' },
+// //   { value: 'America/Los_Angeles', label: 'لوس أنجلوس' },
+// // ]
 
-const SESSION_STATUS_STYLE = {
-  confirmed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  scheduled: 'bg-blue-50 text-blue-700 border-blue-200',
-  completed: 'bg-teal-50 text-teal-700 border-teal-200',
-  noshow:    'bg-red-50 text-red-600 border-red-200',
-  trial:     'bg-amber-50 text-amber-700 border-amber-200',
-  active:    'bg-emerald-50 text-emerald-700 border-emerald-200',
-  paused:    'bg-orange-50 text-orange-700 border-orange-200',
-  cancelled: 'bg-red-50 text-red-600 border-red-200',
-}
+// const SESSION_STATUS_STYLE = {
+//   confirmed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+//   scheduled: 'bg-blue-50 text-blue-700 border-blue-200',
+//   completed: 'bg-teal-50 text-teal-700 border-teal-200',
+//   noshow:    'bg-red-50 text-red-600 border-red-200',
+//   trial:     'bg-amber-50 text-amber-700 border-amber-200',
+//   active:    'bg-emerald-50 text-emerald-700 border-emerald-200',
+//   paused:    'bg-orange-50 text-orange-700 border-orange-200',
+//   cancelled: 'bg-red-50 text-red-600 border-red-200',
+// }
 
-const STATUS_LABELS = {
-  active:'نشط', trial:'تجريبي', onhold:'موقوف', cancelled:'ملغي', paused:'متوقف',
-  scheduled:'مجدول', confirmed:'مؤكد', noshow:'غياب', completed:'مكتمل',
-}
+// const STATUS_LABELS = {
+//   active:'نشط', trial:'تجريبي', onhold:'موقوف', cancelled:'ملغي', paused:'متوقف',
+//   scheduled:'مجدول', confirmed:'مؤكد', noshow:'غياب', completed:'مكتمل',
+// }
 
-function calcTeacherTime(time, timezone) {
-  if (!time || !timezone) return ''
-  try {
-    const [h, m] = time.split(':').map(Number)
-    const now = new Date()
-    const getOffset = tz => {
-      const utc  = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }))
-      const tzDt = new Date(now.toLocaleString('en-US', { timeZone: tz }))
-      return (tzDt - utc) / 60000
-    }
-    const diff     = getOffset('Africa/Cairo') - getOffset(timezone)
-    const totalMin = h * 60 + m + diff
-    const fh = Math.floor(((totalMin / 60) % 24 + 24) % 24)
-    const fm = ((totalMin % 60) + 60) % 60
-    return `${String(fh).padStart(2,'0')}:${String(fm).padStart(2,'0')}`
-  } catch { return '' }
-}
+// function calcTeacherTime(time, timezone) {
+//   if (!time || !timezone) return ''
+//   try {
+//     const [h, m] = time.split(':').map(Number)
+//     const now = new Date()
+//     const getOffset = tz => {
+//       const utc  = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }))
+//       const tzDt = new Date(now.toLocaleString('en-US', { timeZone: tz }))
+//       return (tzDt - utc) / 60000
+//     }
+//     const diff     = getOffset('Africa/Cairo') - getOffset(timezone)
+//     const totalMin = h * 60 + m + diff
+//     const fh = Math.floor(((totalMin / 60) % 24 + 24) % 24)
+//     const fm = ((totalMin % 60) + 60) % 60
+//     return `${String(fh).padStart(2,'0')}:${String(fm).padStart(2,'0')}`
+//   } catch { return '' }
+// }
 
-function isMakeupPast(makeup) {
-  if (!makeup?.date || !makeup?.studentTime) return false
-  return new Date(`${makeup.date}T${makeup.studentTime}`) < new Date()
-}
+// function isMakeupPast(makeup) {
+//   if (!makeup?.date || !makeup?.studentTime) return false
+//   return new Date(`${makeup.date}T${makeup.studentTime}`) < new Date()
+// }
 
-function todayStr() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-}
+// function todayStr() {
+//   const d = new Date()
+//   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+// }
 
-const ic = "w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all"
+// const ic = "w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all"
 
-function Modal({ title, children, onClose, wide }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
-      onClick={e => e.target === e.currentTarget}>
-      <div className={`bg-white rounded-2xl shadow-2xl w-full ${wide ? 'max-w-2xl' : 'max-w-md'} max-h-[90vh] overflow-y-auto`}>
-        <div className="flex items-center justify-between p-6 border-b border-slate-100 sticky top-0 bg-white z-10">
-          {title}
-          <button onClick={onClose}
-            className="w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all text-lg">✕</button>
-        </div>
-        <div className="p-6">{children}</div>
-      </div>
-    </div>
-  )
-}
+// function Modal({ title, children, onClose, wide }) {
+//   return (
+//     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
+//       onClick={e => e.target === e.currentTarget}>
+//       <div className={`bg-white rounded-2xl shadow-2xl w-full ${wide ? 'max-w-2xl' : 'max-w-md'} max-h-[90vh] overflow-y-auto`}>
+//         <div className="flex items-center justify-between p-6 border-b border-slate-100 sticky top-0 bg-white z-10">
+//           {title}
+//           <button onClick={onClose}
+//             className="w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all text-lg">✕</button>
+//         </div>
+//         <div className="p-6">{children}</div>
+//       </div>
+//     </div>
+//   )
+// }
 
-function ConfirmDialog({ message, onConfirm, onCancel }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full space-y-4">
-        <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center mx-auto text-2xl">🗑️</div>
-        <p className="text-slate-700 text-center font-medium">{message}</p>
-        <div className="flex gap-3 justify-center">
-          <button onClick={onCancel}
-            className="px-5 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 text-sm">إلغاء</button>
-          <button onClick={onConfirm}
-            className="px-5 py-2 rounded-xl text-white text-sm font-medium bg-red-500 hover:bg-red-600">تأكيد الحذف</button>
-        </div>
-      </div>
-    </div>
-  )
-}
+// function ConfirmDialog({ message, onConfirm, onCancel }) {
+//   return (
+//     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+//       <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full space-y-4">
+//         <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center mx-auto text-2xl">🗑️</div>
+//         <p className="text-slate-700 text-center font-medium">{message}</p>
+//         <div className="flex gap-3 justify-center">
+//           <button onClick={onCancel}
+//             className="px-5 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 text-sm">إلغاء</button>
+//           <button onClick={onConfirm}
+//             className="px-5 py-2 rounded-xl text-white text-sm font-medium bg-red-500 hover:bg-red-600">تأكيد الحذف</button>
+//         </div>
+//       </div>
+//     </div>
+//   )
+// }
 
-function FilterSelect({ value, onChange, options }) {
-  return (
-    <select value={value} onChange={e => onChange(e.target.value)}
-      className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-all">
-      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </select>
-  )
-}
+// function FilterSelect({ value, onChange, options }) {
+//   return (
+//     <select value={value} onChange={e => onChange(e.target.value)}
+//       className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-all">
+//       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+//     </select>
+//   )
+// }
 
-function MakeupCell({ session, onOpen, onClearRequest }) {
-  const { makeup } = session
-  const eligible = ['confirmed','completed','scheduled','noshow','active','trial'].includes(session.status)
+// function MakeupCell({ session, onOpen, onClearRequest }) {
+//   const { makeup } = session
+//   const eligible = ['confirmed','completed','scheduled','noshow','active','trial'].includes(session.status)
 
-  if (!makeup?.confirmed) {
-    if (!eligible) return <span className="text-slate-300 text-xs">—</span>
-    return (
-      <button onClick={() => onOpen(session)}
-        className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
-        <Plus size={12}/> تعويض
-      </button>
-    )
-  }
+//   if (!makeup?.confirmed) {
+//     if (!eligible) return <span className="text-slate-300 text-xs">—</span>
+//     return (
+//       <button onClick={() => onOpen(session)}
+//         className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
+//         <Plus size={12}/> تعويض
+//       </button>
+//     )
+//   }
 
-  const past = isMakeupPast(makeup)
-  if (past) {
-    return (
-      <div className="flex flex-col gap-1">
-        <span className="text-xs text-slate-400 line-through">{makeup.date} — {makeup.studentTime}</span>
-        <button onClick={() => onOpen(session)}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
-          <Clock size={12}/> تعويض جديد
-        </button>
-      </div>
-    )
-  }
+//   const past = isMakeupPast(makeup)
+//   if (past) {
+//     return (
+//       <div className="flex flex-col gap-1">
+//         <span className="text-xs text-slate-400 line-through">{makeup.date} — {makeup.studentTime}</span>
+//         <button onClick={() => onOpen(session)}
+//           className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
+//           <Clock size={12}/> تعويض جديد
+//         </button>
+//       </div>
+//     )
+//   }
 
-  return (
-    <div className="flex flex-col gap-0.5 group relative min-w-[130px]">
-      <div className="flex items-center gap-1.5">
-        <span className="w-2 h-2 rounded-full bg-purple-400 flex-shrink-0 animate-pulse"/>
-        <span className="text-xs font-semibold text-purple-700">{makeup.day}</span>
-      </div>
-      <span className="text-xs text-slate-600 font-mono">{makeup.date}</span>
-      <span className="text-xs text-slate-500">
-        {makeup.studentTime}
-        {makeup.teacherTime && makeup.teacherTime !== makeup.studentTime &&
-          <span className="text-purple-500"> (مصر: {makeup.teacherTime})</span>}
-      </span>
-      <button onClick={() => onClearRequest(session.id)}
-        className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs hover:bg-red-200 transition-all">
-        ✕
-      </button>
-    </div>
-  )
-}
+//   return (
+//     <div className="flex flex-col gap-0.5 group relative min-w-[130px]">
+//       <div className="flex items-center gap-1.5">
+//         <span className="w-2 h-2 rounded-full bg-purple-400 flex-shrink-0 animate-pulse"/>
+//         <span className="text-xs font-semibold text-purple-700">{makeup.day}</span>
+//       </div>
+//       <span className="text-xs text-slate-600 font-mono">{makeup.date}</span>
+//       <span className="text-xs text-slate-500">
+//         {makeup.studentTime}
+//         {makeup.teacherTime && makeup.teacherTime !== makeup.studentTime &&
+//           <span className="text-purple-500"> (مصر: {makeup.teacherTime})</span>}
+//       </span>
+//       <button onClick={() => onClearRequest(session.id)}
+//         className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs hover:bg-red-200 transition-all">
+//         ✕
+//       </button>
+//     </div>
+//   )
+// }
 
-const EMPTY_FORM = {
-  name: '', phone: '', country: '', contactMethod: '',
-  teacherId: '', program: '', status: 'trial',
-  _hasBeenActive: false,
-  trialDate: '', trialTime: '',
-  regularDates: [{ day: '', time: '', teacherTime: '', timezone: 'Africa/Cairo' }],
-  pauseType: '', pauseUntil: '', notes: '', flagged: false,
-}
+// const EMPTY_FORM = {
+//   name: '', phone: '', country: '', contactMethod: '',
+//   teacherId: '', program: '', status: 'trial',
+//   _hasBeenActive: false,
+//   trialDate: '', trialTime: '',
+//   regularDates: [{ day: '', time: '', teacherTime: '', timezone: 'Africa/Cairo' }],
+//   pauseType: '', pauseUntil: '', notes: '', flagged: false,
+// }
 
-export default function Supervisorsessions() {
-  const {
-    sessions, sessionsLoading, sessionsError,
-    teachers, supervisors, programs,
-    addSession, updateSession, deleteSession, toggleFlag, updateMakeup,
-  } = useApp()
+// export default function Supervisorsessions() {
+//   const {
+//     sessions, sessionsLoading, sessionsError,
+//     teachers, supervisors, programs,
+//     addSession, updateSession, deleteSession, toggleFlag, updateMakeup,
+//   } = useApp()
 
-  const [search,           setSearch]           = useState('')
-  const [filterStatus,     setFilterStatus]     = useState('all')
-  const [filterTeacher,    setFilterTeacher]    = useState('all')
-  const [filterSupervisor, setFilterSupervisor] = useState('all')
-  const [filterDay,        setFilterDay]        = useState('all')
-  const [filterMonth,      setFilterMonth]      = useState('all')
-  const [flaggedOnly,      setFlaggedOnly]      = useState(false)
+//   const [search,           setSearch]           = useState('')
+//   const [filterStatus,     setFilterStatus]     = useState('all')
+//   const [filterTeacher,    setFilterTeacher]    = useState('all')
+//   const [filterSupervisor, setFilterSupervisor] = useState('all')
+//   const [filterDay,        setFilterDay]        = useState('all')
+//   const [filterMonth,      setFilterMonth]      = useState('all')
+//   const [flaggedOnly,      setFlaggedOnly]      = useState(false)
 
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editItem,  setEditItem]  = useState(null)
-  const [form,      setForm]      = useState(EMPTY_FORM)
+//   const [modalOpen, setModalOpen] = useState(false)
+//   const [editItem,  setEditItem]  = useState(null)
+//   const [form,      setForm]      = useState(EMPTY_FORM)
 
-  const [makeupModal,   setMakeupModal]   = useState(false)
-  const [makeupSession, setMakeupSession] = useState(null)
-  const [makeupForm,    setMakeupForm]    = useState({ day:'', date:'', studentTime:'', teacherTime:'', timezone:'Africa/Cairo' })
+//   const [makeupModal,   setMakeupModal]   = useState(false)
+//   const [makeupSession, setMakeupSession] = useState(null)
+//   const [makeupForm,    setMakeupForm]    = useState({ day:'', date:'', studentTime:'', teacherTime:'', timezone:'Africa/Cairo' })
 
-  const [confirm, setConfirm] = useState(null)
+//   const [confirm, setConfirm] = useState(null)
 
-  // ── Filters ──
-  const filtered = useMemo(() => sessions.filter(s => {
-    const date      = s.trialDate || (s.regularDates?.[0]?.day ? '' : '')
-    const monthStr  = s.trialDate ? String(new Date(s.trialDate).getMonth() + 1) : ''
-    const dayStr    = s.regularDates?.[0]?.day || ''
+//   // ── Filters ──
+//   const filtered = useMemo(() => sessions.filter(s => {
+//     const date      = s.trialDate || (s.regularDates?.[0]?.day ? '' : '')
+//     const monthStr  = s.trialDate ? String(new Date(s.trialDate).getMonth() + 1) : ''
+//     const dayStr    = s.regularDates?.[0]?.day || ''
 
-    return (
-      (!search           || s.studentName?.includes(search) || String(s.sessionNumber)?.includes(search)) &&
-      (filterStatus     === 'all' || s.status     === filterStatus) &&
-      (filterTeacher    === 'all' || s.teacherId  === filterTeacher) &&
-      (filterSupervisor === 'all' || s.supervisorId === filterSupervisor) &&
-      (filterDay        === 'all' || dayStr       === filterDay) &&
-      (filterMonth      === 'all' || monthStr     === filterMonth) &&
-      (!flaggedOnly      || s.flagged)
-    )
-  }), [sessions, search, filterStatus, filterTeacher, filterSupervisor, filterDay, filterMonth, flaggedOnly])
+//     return (
+//       (!search           || s.studentName?.includes(search) || String(s.sessionNumber)?.includes(search)) &&
+//       (filterStatus     === 'all' || s.status     === filterStatus) &&
+//       (filterTeacher    === 'all' || s.teacherId  === filterTeacher) &&
+//       (filterSupervisor === 'all' || s.supervisorId === filterSupervisor) &&
+//       (filterDay        === 'all' || dayStr       === filterDay) &&
+//       (filterMonth      === 'all' || monthStr     === filterMonth) &&
+//       (!flaggedOnly      || s.flagged)
+//     )
+//   }), [sessions, search, filterStatus, filterTeacher, filterSupervisor, filterDay, filterMonth, flaggedOnly])
 
-  // ── CRUD ──
-  const openAdd = () => { setEditItem(null); setForm(EMPTY_FORM); setModalOpen(true) }
+//   // ── CRUD ──
+//   const openAdd = () => { setEditItem(null); setForm(EMPTY_FORM); setModalOpen(true) }
 
-  const openEdit = (s) => {
-    setEditItem(s)
-    setForm({
-      name:           s.studentName    || '',
-      phone:          s.studentPhone   || '',
-      country:        s.country        || '',
-      contactMethod:  s.contactMethod  || '',
-      teacherId:      s.teacherId      || '',
-      program:        s.program        || '',
-      status:         s.status         || 'trial',
-      _hasBeenActive: s._hasBeenActive || ['active','paused','cancelled'].includes(s.status),
-      trialDate:      s.trialDate      || '',
-      trialTime:      s.trialTime      || '',
-      regularDates:   s.regularDates   || [{ day:'', time:'', teacherTime:'', timezone:'Africa/Cairo' }],
-      pauseType:      s.pauseType      || '',
-      pauseUntil:     s.pauseUntil     || '',
-      notes:          s.notes          || '',
-      flagged:        s.flagged        || false,
-    })
-    setModalOpen(true)
-  }
-  const [saving, setSaving] = useState(false)
+//   const openEdit = (s) => {
+//     setEditItem(s)
+//     setForm({
+//       name:           s.studentName    || '',
+//       phone:          s.studentPhone   || '',
+//       country:        s.country        || '',
+//       contactMethod:  s.contactMethod  || '',
+//       teacherId:      s.teacherId      || '',
+//       program:        s.program        || '',
+//       status:         s.status         || 'trial',
+//       _hasBeenActive: s._hasBeenActive || ['active','paused','cancelled'].includes(s.status),
+//       trialDate:      s.trialDate      || '',
+//       trialTime:      s.trialTime      || '',
+//       regularDates:   s.regularDates   || [{ day:'', time:'', teacherTime:'', timezone:'Africa/Cairo' }],
+//       pauseType:      s.pauseType      || '',
+//       pauseUntil:     s.pauseUntil     || '',
+//       notes:          s.notes          || '',
+//       flagged:        s.flagged        || false,
+//     })
+//     setModalOpen(true)
+//   }
+//   const [saving, setSaving] = useState(false)
 
 
- const saveSession = async () => {
-  if (saving) return          // ← منع الضغط مرتين
-  try {
-    setSaving(true)
-    const teacher = teachers.find(t => t.id === form.teacherId)
-    if (editItem) {
-      await updateSession(editItem.id, { ...form, makeup: editItem.makeup }, teacher?.name || '')
-    } else {
-      await addSession(form, teacher?.name || '', null, '')
-    }
-    setModalOpen(false)
-  } finally {
-    setSaving(false)
-  }
-}
+//  const saveSession = async () => {
+//   if (saving) return          // ← منع الضغط مرتين
+//   try {
+//     setSaving(true)
+//     const teacher = teachers.find(t => t.id === form.teacherId)
+//     if (editItem) {
+//       await updateSession(editItem.id, { ...form, makeup: editItem.makeup }, teacher?.name || '')
+//     } else {
+//       await addSession(form, teacher?.name || '', null, '')
+//     }
+//     setModalOpen(false)
+//   } finally {
+//     setSaving(false)
+//   }
+// }
 
-  const handleDeleteSession  = async (id) => { await deleteSession(id);         setConfirm(null) }
-  const handleToggleFlag     = async (id) => { await toggleFlag(id) }
-  const handleClearMakeup    = async (id) => { await updateMakeup(id, null);    setConfirm(null) }
+//   const handleDeleteSession  = async (id) => { await deleteSession(id);         setConfirm(null) }
+//   const handleToggleFlag     = async (id) => { await toggleFlag(id) }
+//   const handleClearMakeup    = async (id) => { await updateMakeup(id, null);    setConfirm(null) }
 
-  // ── Makeup ──
-  const openMakeup = (s) => {
-    setMakeupSession(s)
-    setMakeupForm({ day:'', date:'', studentTime:'', teacherTime:'', timezone:'Africa/Cairo' })
-    setMakeupModal(true)
-  }
+//   // ── Makeup ──
+//   const openMakeup = (s) => {
+//     setMakeupSession(s)
+//     setMakeupForm({ day:'', date:'', studentTime:'', teacherTime:'', timezone:'Africa/Cairo' })
+//     setMakeupModal(true)
+//   }
 
-  const updateMakeupField = (field, value) => {
-    setMakeupForm(p => {
-      const updated = { ...p, [field]: value }
-      if (field === 'studentTime' || field === 'timezone') {
-        updated.teacherTime = calcTeacherTime(
-          field === 'studentTime' ? value : updated.studentTime,
-          field === 'timezone'    ? value : updated.timezone
-        )
-      }
-      return updated
-    })
-  }
+//   const updateMakeupField = (field, value) => {
+//     setMakeupForm(p => {
+//       const updated = { ...p, [field]: value }
+//       if (field === 'studentTime' || field === 'timezone') {
+//         updated.teacherTime = calcTeacherTime(
+//           field === 'studentTime' ? value : updated.studentTime,
+//           field === 'timezone'    ? value : updated.timezone
+//         )
+//       }
+//       return updated
+//     })
+//   }
 
-  const saveMakeup = async () => {
-    await updateMakeup(makeupSession.id, { ...makeupForm, confirmed: true })
-    setMakeupModal(false)
-  }
+//   const saveMakeup = async () => {
+//     await updateMakeup(makeupSession.id, { ...makeupForm, confirmed: true })
+//     setMakeupModal(false)
+//   }
 
-  const formValid = !!(form.name?.trim() && form.teacherId && (
-    form.status === 'trial'  ? form.trialDate && form.trialTime :
-    form.status === 'active' ? form.regularDates?.some(d => d.day && d.time) : true
-  ))
+//   const formValid = !!(form.name?.trim() && form.teacherId && (
+//     form.status === 'trial'  ? form.trialDate && form.trialTime :
+//     form.status === 'active' ? form.regularDates?.some(d => d.day && d.time) : true
+//   ))
 
-  const hasActiveFilters = filterStatus !== 'all' || filterTeacher !== 'all' || filterSupervisor !== 'all' || filterDay !== 'all' || filterMonth !== 'all'
-  const clearFilters = () => { setFilterStatus('all'); setFilterTeacher('all'); setFilterSupervisor('all'); setFilterDay('all'); setFilterMonth('all') }
+//   const hasActiveFilters = filterStatus !== 'all' || filterTeacher !== 'all' || filterSupervisor !== 'all' || filterDay !== 'all' || filterMonth !== 'all'
+//   const clearFilters = () => { setFilterStatus('all'); setFilterTeacher('all'); setFilterSupervisor('all'); setFilterDay('all'); setFilterMonth('all') }
 
-  if (sessionsLoading) return (
-    <div className="flex items-center justify-center py-20 text-gray-400">
-      <div className="animate-spin w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full ml-2"/>
-      جاري التحميل...
-    </div>
-  )
-  if (sessionsError) return <div className="text-center py-20 text-red-400">⚠️ {sessionsError}</div>
+//   if (sessionsLoading) return (
+//     <div className="flex items-center justify-center py-20 text-gray-400">
+//       <div className="animate-spin w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full ml-2"/>
+//       جاري التحميل...
+//     </div>
+//   )
+//   if (sessionsError) return <div className="text-center py-20 text-red-400">⚠️ {sessionsError}</div>
 
-  return (
-    <div dir="rtl" className="space-y-6 font-sans p-6 min-h-screen">
+//   return (
+//     <div dir="rtl" className="space-y-6 font-sans p-6 min-h-screen">
 
-      {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">إدارة الحلقات</h1>
-          <p className="text-sm text-slate-500 mt-0.5">عرض وتتبع جميع الحلقات الأكاديمية</p>
-        </div>
-        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm shadow-sm">
-          <Calendar size={15} className="text-teal-500"/>
-          <span className="font-mono font-semibold text-slate-700">{todayStr()}</span>
-          <span className="text-slate-400 text-xs">اليوم</span>
-        </div>
-      </div>
+//       {/* Header */}
+//       <div className="flex items-start justify-between flex-wrap gap-3">
+//         <div>
+//           <h1 className="text-2xl font-bold text-slate-800">إدارة الحلقات</h1>
+//           <p className="text-sm text-slate-500 mt-0.5">عرض وتتبع جميع الحلقات الأكاديمية</p>
+//         </div>
+//         <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm shadow-sm">
+//           <Calendar size={15} className="text-teal-500"/>
+//           <span className="font-mono font-semibold text-slate-700">{todayStr()}</span>
+//           <span className="text-slate-400 text-xs">اليوم</span>
+//         </div>
+//       </div>
 
-      {/* Search + Add */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
-          <svg className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-          </svg>
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="بحث باسم الطالب أو رقم الحلقة..."
-            className="w-full pr-10 pl-4 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-slate-700 text-sm"/>
-        </div>
-        <button onClick={openAdd}
-          className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl shadow-sm hover:shadow-md transition-all font-medium text-sm whitespace-nowrap">
-          <Plus size={16}/> إضافة حلقة
-        </button>
-      </div>
+//       {/* Search + Add */}
+//       <div className="flex items-center gap-3">
+//         <div className="relative flex-1">
+//           <svg className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+//             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+//           </svg>
+//           <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+//             placeholder="بحث باسم الطالب أو رقم الحلقة..."
+//             className="w-full pr-10 pl-4 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-slate-700 text-sm"/>
+//         </div>
+//         <button onClick={openAdd}
+//           className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl shadow-sm hover:shadow-md transition-all font-medium text-sm whitespace-nowrap">
+//           <Plus size={16}/> إضافة حلقة
+//         </button>
+//       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <Filter size={14} className="text-slate-400"/>
-            <span className="text-xs font-semibold text-slate-500">فلترة:</span>
-          </div>
+//       {/* Filters */}
+//       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+//         <div className="flex flex-wrap items-center gap-3">
+//           <div className="flex items-center gap-1.5">
+//             <Filter size={14} className="text-slate-400"/>
+//             <span className="text-xs font-semibold text-slate-500">فلترة:</span>
+//           </div>
 
-          <FilterSelect value={filterStatus} onChange={setFilterStatus} options={[
-            { value:'all', label:'كل الحالات' },
-            { value:'trial',     label:'تجريبي' },
-            { value:'active',    label:'نشط' },
-            { value:'paused',    label:'متوقف' },
-            { value:'cancelled', label:'ملغي' },
-          ]}/>
+//           <FilterSelect value={filterStatus} onChange={setFilterStatus} options={[
+//             { value:'all', label:'كل الحالات' },
+//             { value:'trial',     label:'تجريبي' },
+//             { value:'active',    label:'نشط' },
+//             { value:'paused',    label:'متوقف' },
+//             { value:'cancelled', label:'ملغي' },
+//           ]}/>
 
-          <FilterSelect value={filterTeacher} onChange={setFilterTeacher} options={[
-            { value:'all', label:'كل المعلمين' },
-            ...teachers.filter(t => !t.isDeleted).map(t => ({ value: t.id, label: t.name.replace('الشيخ ','') }))
-          ]}/>
+//           <FilterSelect value={filterTeacher} onChange={setFilterTeacher} options={[
+//             { value:'all', label:'كل المعلمين' },
+//             ...teachers.filter(t => !t.isDeleted).map(t => ({ value: t.id, label: t.name.replace('الشيخ ','') }))
+//           ]}/>
 
-          <FilterSelect value={filterSupervisor} onChange={setFilterSupervisor} options={[
-            { value:'all', label:'كل المشرفين' },
-            ...supervisors.filter(s => !s.isDeleted).map(s => ({ value: s.id, label: s.name }))
-          ]}/>
+//           <FilterSelect value={filterSupervisor} onChange={setFilterSupervisor} options={[
+//             { value:'all', label:'كل المشرفين' },
+//             ...supervisors.filter(s => !s.isDeleted).map(s => ({ value: s.id, label: s.name }))
+//           ]}/>
 
-          <FilterSelect value={filterDay} onChange={setFilterDay} options={[
-            { value:'all', label:'كل الأيام' },
-            ...DAYS_AR.map(d => ({ value:d, label:d }))
-          ]}/>
+//           <FilterSelect value={filterDay} onChange={setFilterDay} options={[
+//             { value:'all', label:'كل الأيام' },
+//             ...DAYS_AR.map(d => ({ value:d, label:d }))
+//           ]}/>
 
-          <FilterSelect value={filterMonth} onChange={setFilterMonth} options={[
-            { value:'all', label:'كل الشهور' },
-            ...MONTHS_AR.map((m,i) => ({ value: String(i+1), label: m }))
-          ]}/>
+//           <FilterSelect value={filterMonth} onChange={setFilterMonth} options={[
+//             { value:'all', label:'كل الشهور' },
+//             ...MONTHS_AR.map((m,i) => ({ value: String(i+1), label: m }))
+//           ]}/>
 
-          <button onClick={() => setFlaggedOnly(p => !p)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${
-              flaggedOnly ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-white text-slate-500 border-slate-200 hover:text-amber-500'
-            }`}>
-            <Star size={13} className={flaggedOnly ? 'fill-amber-400 text-amber-400' : ''}/> مميزة فقط
-          </button>
+//           <button onClick={() => setFlaggedOnly(p => !p)}
+//             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${
+//               flaggedOnly ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-white text-slate-500 border-slate-200 hover:text-amber-500'
+//             }`}>
+//             <Star size={13} className={flaggedOnly ? 'fill-amber-400 text-amber-400' : ''}/> مميزة فقط
+//           </button>
 
-          {hasActiveFilters && (
-            <button onClick={clearFilters}
-              className="text-xs text-red-400 hover:text-red-600 px-3 py-2 rounded-xl hover:bg-red-50 transition-all font-medium">
-              ✕ مسح الفلاتر
-            </button>
-          )}
+//           {hasActiveFilters && (
+//             <button onClick={clearFilters}
+//               className="text-xs text-red-400 hover:text-red-600 px-3 py-2 rounded-xl hover:bg-red-50 transition-all font-medium">
+//               ✕ مسح الفلاتر
+//             </button>
+//           )}
 
-          <div className="mr-auto text-xs text-slate-400 font-medium">{filtered.length} حلقة</div>
-        </div>
-      </div>
+//           <div className="mr-auto text-xs text-slate-400 font-medium">{filtered.length} حلقة</div>
+//         </div>
+//       </div>
 
-      {/* Table */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-100">
-                {['رقم الحلقة','الطالب','البلد','المعلم','المشرف','الحالة','الموعد','التعويض','إجراء'].map(h => (
-                  <th key={h} className="px-4 py-3.5 text-right text-xs font-semibold text-slate-500 whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {filtered.length === 0 && (
-                <tr><td colSpan={9} className="px-5 py-16 text-center text-slate-400 text-sm">
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-2xl">🔍</div>
-                    <span>لا توجد حلقات مطابقة</span>
-                  </div>
-                </td></tr>
-              )}
-              {filtered.map(s => {
-                const dateDisplay = s.status === 'trial' ? s.trialDate : `${s.regularDates?.[0]?.day} - ${s.regularDates?.[1]?.day}` || '—'
-                const timeDisplay =  s.status === 'trial' ? s.trialTime : `${s.regularDates?.[0]?.time} - ${s.regularDates?.[1]?.time}` || ''
-                const isToday     = s.trialDate === todayStr()
+//       {/* Table */}
+//       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+//         <div className="overflow-x-auto">
+//           <table className="w-full">
+//             <thead>
+//               <tr className="bg-slate-50/80 border-b border-slate-100">
+//                 {['رقم الحلقة','الطالب','البلد','المعلم','المشرف','الحالة','الموعد','التعويض','إجراء'].map(h => (
+//                   <th key={h} className="px-4 py-3.5 text-right text-xs font-semibold text-slate-500 whitespace-nowrap">{h}</th>
+//                 ))}
+//               </tr>
+//             </thead>
+//             <tbody className="divide-y divide-slate-50">
+//               {filtered.length === 0 && (
+//                 <tr><td colSpan={9} className="px-5 py-16 text-center text-slate-400 text-sm">
+//                   <div className="flex flex-col items-center gap-2">
+//                     <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-2xl">🔍</div>
+//                     <span>لا توجد حلقات مطابقة</span>
+//                   </div>
+//                 </td></tr>
+//               )}
+//               {filtered.map(s => {
+//                 const dateDisplay = s.status === 'trial' ? s.trialDate : `${s.regularDates?.[0]?.day} - ${s.regularDates?.[1]?.day}` || '—'
+//                 const timeDisplay =  s.status === 'trial' ? s.trialTime : `${s.regularDates?.[0]?.time} - ${s.regularDates?.[1]?.time}` || ''
+//                 const isToday     = s.trialDate === todayStr()
 
-                return (
-                  <tr key={s.id} className={`transition-colors ${s.flagged ? 'bg-amber-50/40 hover:bg-amber-50/70' : 'hover:bg-slate-50/60'}`}>
+//                 return (
+//                   <tr key={s.id} className={`transition-colors ${s.flagged ? 'bg-amber-50/40 hover:bg-amber-50/70' : 'hover:bg-slate-50/60'}`}>
 
-                    {/* رقم الحلقة */}
-                    <td className="px-4 py-3.5">
-                      <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">
-                        #{s.sessionNumber}
-                      </span>
-                    </td>
+//                     {/* رقم الحلقة */}
+//                     <td className="px-4 py-3.5">
+//                       <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">
+//                         #{s.sessionNumber}
+//                       </span>
+//                     </td>
 
-                    {/* الطالب */}
-                    <td className="px-4 py-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-xl bg-teal-50 flex items-center justify-center text-sm font-bold text-teal-700 flex-shrink-0">
-                          {s.studentName?.charAt(0) || '؟'}
-                        </div>
-                        <div>
-                          <div className="font-medium text-slate-800 text-sm whitespace-nowrap">{s.studentName || '—'}</div>
-                          {s.studentPhone && <div className="text-xs text-slate-400 font-mono">{s.studentPhone}</div>}
-                        </div>
-                      </div>
-                    </td>
+//                     {/* الطالب */}
+//                     <td className="px-4 py-3.5">
+//                       <div className="flex items-center gap-2.5">
+//                         <div className="w-8 h-8 rounded-xl bg-teal-50 flex items-center justify-center text-sm font-bold text-teal-700 flex-shrink-0">
+//                           {s.studentName?.charAt(0) || '؟'}
+//                         </div>
+//                         <div>
+//                           <div className="font-medium text-slate-800 text-sm whitespace-nowrap">{s.studentName || '—'}</div>
+//                           {s.studentPhone && <div className="text-xs text-slate-400 font-mono">{s.studentPhone}</div>}
+//                         </div>
+//                       </div>
+//                     </td>
 
-                    {/* البلد */}
-                    <td className="px-4 py-3.5 text-xs text-slate-500">{s.country || '—'}</td>
+//                     {/* البلد */}
+//                     <td className="px-4 py-3.5 text-xs text-slate-500">{s.country || '—'}</td>
 
-                    {/* المعلم */}
-                    <td className="px-4 py-3.5 text-sm text-slate-600 whitespace-nowrap">
-                      {s.teacherName?.replace('الشيخ ','') || '—'}
-                    </td>
+//                     {/* المعلم */}
+//                     <td className="px-4 py-3.5 text-sm text-slate-600 whitespace-nowrap">
+//                       {s.teacherName?.replace('الشيخ ','') || '—'}
+//                     </td>
 
-                    {/* المشرف */}
-                    <td className="px-4 py-3.5">
-                      {s.supervisorName ? (
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-6 h-6 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
-                            <User size={12} className="text-indigo-500"/>
-                          </div>
-                          <span className="text-sm text-slate-600 whitespace-nowrap">{s.supervisorName}</span>
-                        </div>
-                      ) : <span className="text-slate-300 text-sm">—</span>}
-                    </td>
+//                     {/* المشرف */}
+//                     <td className="px-4 py-3.5">
+//                       {s.supervisorName ? (
+//                         <div className="flex items-center gap-1.5">
+//                           <div className="w-6 h-6 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+//                             <User size={12} className="text-indigo-500"/>
+//                           </div>
+//                           <span className="text-sm text-slate-600 whitespace-nowrap">{s.supervisorName}</span>
+//                         </div>
+//                       ) : <span className="text-slate-300 text-sm">—</span>}
+//                     </td>
 
-                    {/* الحالة */}
-                    <td className="px-4 py-3.5">
-                      <span className={`text-xs border px-2.5 py-1 rounded-lg font-semibold ${SESSION_STATUS_STYLE[s.status] || 'bg-slate-50 text-slate-500 border-slate-200'}`}>
-                        {STATUS_LABELS[s.status] || s.status}
-                      </span>
-                    </td>
+//                     {/* الحالة */}
+//                     <td className="px-4 py-3.5">
+//                       <span className={`text-xs border px-2.5 py-1 rounded-lg font-semibold ${SESSION_STATUS_STYLE[s.status] || 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+//                         {STATUS_LABELS[s.status] || s.status}
+//                       </span>
+//                     </td>
 
-                    {/* الموعد */}
-                    <td className="px-4 py-3.5">
-                      <div className="flex flex-col gap-0.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs text-slate-700 font-mono">{dateDisplay}</span>
-                          {isToday && <span className="text-xs bg-teal-500 text-white px-1.5 py-0.5 rounded-md font-semibold">اليوم</span>}
-                        </div>
-                        {timeDisplay && <span className="text-xs text-slate-500 font-mono">{timeDisplay}</span>}
-                      </div>
-                    </td>
+//                     {/* الموعد */}
+//                     <td className="px-4 py-3.5">
+//                       <div className="flex flex-col gap-0.5">
+//                         <div className="flex items-center gap-1.5">
+//                           <span className="text-xs text-slate-700 font-mono">{dateDisplay}</span>
+//                           {isToday && <span className="text-xs bg-teal-500 text-white px-1.5 py-0.5 rounded-md font-semibold">اليوم</span>}
+//                         </div>
+//                         {timeDisplay && <span className="text-xs text-slate-500 font-mono">{timeDisplay}</span>}
+//                       </div>
+//                     </td>
 
-                    {/* التعويض */}
-                    <td className="px-4 py-3.5 min-w-[140px]">
-                      <MakeupCell session={s} onOpen={openMakeup}
-                        onClearRequest={(id) => setConfirm({ id, type: 'makeup' })}/>
-                    </td>
+//                     {/* التعويض */}
+//                     <td className="px-4 py-3.5 min-w-[140px]">
+//                       <MakeupCell session={s} onOpen={openMakeup}
+//                         onClearRequest={(id) => setConfirm({ id, type: 'makeup' })}/>
+//                     </td>
 
-                    {/* الإجراء */}
-                    <td className="px-4 py-3.5">
-                      <div className="flex items-center gap-1.5">
-                        <button onClick={() => handleToggleFlag(s.id)}
-                          className={`p-1.5 rounded-lg transition-all ${s.flagged ? 'text-amber-500 bg-amber-50' : 'text-slate-300 hover:text-amber-400 hover:bg-amber-50'}`}>
-                          <Star size={14} className={s.flagged ? 'fill-amber-400' : ''}/>
-                        </button>
-                        <button onClick={() => openEdit(s)}
-                          className="p-1.5 text-slate-300 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-all">
-                          <Pencil size={14}/>
-                        </button>
-                        <button onClick={() => setConfirm({ id: s.id, type: 'session' })}
-                          className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
-                          <Trash2 size={14}/>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+//                     {/* الإجراء */}
+//                     <td className="px-4 py-3.5">
+//                       <div className="flex items-center gap-1.5">
+//                         <button onClick={() => handleToggleFlag(s.id)}
+//                           className={`p-1.5 rounded-lg transition-all ${s.flagged ? 'text-amber-500 bg-amber-50' : 'text-slate-300 hover:text-amber-400 hover:bg-amber-50'}`}>
+//                           <Star size={14} className={s.flagged ? 'fill-amber-400' : ''}/>
+//                         </button>
+//                         <button onClick={() => openEdit(s)}
+//                           className="p-1.5 text-slate-300 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-all">
+//                           <Pencil size={14}/>
+//                         </button>
+//                         <button onClick={() => setConfirm({ id: s.id, type: 'session' })}
+//                           className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
+//                           <Trash2 size={14}/>
+//                         </button>
+//                       </div>
+//                     </td>
+//                   </tr>
+//                 )
+//               })}
+//             </tbody>
+//           </table>
+//         </div>
+//       </div>
 
-      {/* Modal إضافة/تعديل */}
-      {modalOpen && (
-        <Modal wide
-          title={
-            <div className="flex items-center gap-3">
-              <div className={`p-2 rounded-xl ${editItem ? 'bg-teal-50 text-teal-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                {editItem ? <Pencil size={18}/> : <BookOpen size={18}/>}
-              </div>
-              <div>
-                <p className="text-base font-bold text-slate-800">{editItem ? 'تعديل الحلقة' : 'إضافة حلقة جديدة'}</p>
-                {editItem && <p className="text-xs text-slate-500">{editItem.studentName} — #{editItem.sessionNumber}</p>}
-              </div>
-            </div>
-          }
-          onClose={() => setModalOpen(false)}>
+//       {/* Modal إضافة/تعديل */}
+//       {modalOpen && (
+//         <Modal wide
+//           title={
+//             <div className="flex items-center gap-3">
+//               <div className={`p-2 rounded-xl ${editItem ? 'bg-teal-50 text-teal-600' : 'bg-emerald-50 text-emerald-600'}`}>
+//                 {editItem ? <Pencil size={18}/> : <BookOpen size={18}/>}
+//               </div>
+//               <div>
+//                 <p className="text-base font-bold text-slate-800">{editItem ? 'تعديل الحلقة' : 'إضافة حلقة جديدة'}</p>
+//                 {editItem && <p className="text-xs text-slate-500">{editItem.studentName} — #{editItem.sessionNumber}</p>}
+//               </div>
+//             </div>
+//           }
+//           onClose={() => setModalOpen(false)}>
 
-          <StudentSessionForm
-            form={form} setForm={setForm}
-            teachers={teachers.filter(t => !t.isDeleted)}
-            programs={programs}
-            editItem={editItem}
-          />
+//           <StudentSessionForm
+//             form={form} setForm={setForm}
+//             teachers={teachers.filter(t => !t.isDeleted)}
+//             programs={programs}
+//             editItem={editItem}
+//           />
 
-          <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
-            <button onClick={() => setModalOpen(false)}
-              className="px-5 py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 transition-all text-sm">
-              إلغاء
-            </button>
-<button
-  onClick={saveSession}
-  disabled={!formValid || saving}
-  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-sm font-medium transition-all ${
-    formValid && !saving
-      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:shadow-md'
-      : 'bg-slate-300 cursor-not-allowed'
-  }`}>
-  {saving
-    ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/> جاري الحفظ...</>
-    : editItem ? <><Pencil size={14}/> حفظ التعديل</> : <><Plus size={14}/> إضافة الحلقة</>
-  }
-</button>
-          </div>
-        </Modal>
-      )}
+//           <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
+//             <button onClick={() => setModalOpen(false)}
+//               className="px-5 py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 transition-all text-sm">
+//               إلغاء
+//             </button>
+// <button
+//   onClick={saveSession}
+//   disabled={!formValid || saving}
+//   className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-sm font-medium transition-all ${
+//     formValid && !saving
+//       ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:shadow-md'
+//       : 'bg-slate-300 cursor-not-allowed'
+//   }`}>
+//   {saving
+//     ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/> جاري الحفظ...</>
+//     : editItem ? <><Pencil size={14}/> حفظ التعديل</> : <><Plus size={14}/> إضافة الحلقة</>
+//   }
+// </button>
+//           </div>
+//         </Modal>
+//       )}
 
-      {/* Modal التعويض */}
-      {makeupModal && makeupSession && (
-        <Modal
-          title={
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-purple-50 text-purple-600"><Clock size={18}/></div>
-              <div>
-                <p className="text-base font-bold text-slate-800">حصة تعويض</p>
-                <p className="text-xs text-slate-500">{makeupSession.studentName} — #{makeupSession.sessionNumber}</p>
-              </div>
-            </div>
-          }
-          onClose={() => setMakeupModal(false)}>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">اليوم</label>
-                <select className={ic} value={makeupForm.day} onChange={e => updateMakeupField('day', e.target.value)}>
-                  <option value="">اختر اليوم...</option>
-                  {DAYS_AR.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">التاريخ</label>
-                <input type="date" className={ic} value={makeupForm.date}
-                  onChange={e => updateMakeupField('date', e.target.value)}/>
-              </div>
-            </div>
-            {/* <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5">منطقة الطالب الزمنية</label>
-              <select className={ic} value={makeupForm.timezone} onChange={e => updateMakeupField('timezone', e.target.value)}>
-                {TIMEZONES.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
-              </select>
-            </div> */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">وقت الطالب</label>
-                <input type="time" className={ic} value={makeupForm.studentTime}
-                  onChange={e => updateMakeupField('studentTime', e.target.value)}/>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">
-                  توقيت مصر <span className="text-purple-500 font-normal">⚡ تلقائي</span>
-                </label>
-                <div className={`${ic} bg-purple-50/70 border-purple-200 text-purple-700 font-mono`}>
-                  {makeupForm.teacherTime || <span className="text-slate-400 font-normal text-xs">يُحسب تلقائياً</span>}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="flex justify-end gap-3 mt-5 pt-4 border-t border-slate-100">
-            <button onClick={() => setMakeupModal(false)}
-              className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 text-sm">إلغاء</button>
-            <button onClick={saveMakeup} disabled={!makeupForm.date || !makeupForm.studentTime}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-medium transition-all ${
-                makeupForm.date && makeupForm.studentTime
-                  ? 'bg-gradient-to-r from-purple-600 to-purple-500 hover:shadow-md'
-                  : 'bg-slate-300 cursor-not-allowed'
-              }`}>
-              <Clock size={14}/> تأكيد التعويض
-            </button>
-          </div>
-        </Modal>
-      )}
+//       {/* Modal التعويض */}
+//       {makeupModal && makeupSession && (
+//         <Modal
+//           title={
+//             <div className="flex items-center gap-3">
+//               <div className="p-2 rounded-xl bg-purple-50 text-purple-600"><Clock size={18}/></div>
+//               <div>
+//                 <p className="text-base font-bold text-slate-800">حصة تعويض</p>
+//                 <p className="text-xs text-slate-500">{makeupSession.studentName} — #{makeupSession.sessionNumber}</p>
+//               </div>
+//             </div>
+//           }
+//           onClose={() => setMakeupModal(false)}>
+//           <div className="space-y-4">
+//             <div className="grid grid-cols-2 gap-3">
+//               <div>
+//                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">اليوم</label>
+//                 <select className={ic} value={makeupForm.day} onChange={e => updateMakeupField('day', e.target.value)}>
+//                   <option value="">اختر اليوم...</option>
+//                   {DAYS_AR.map(d => <option key={d} value={d}>{d}</option>)}
+//                 </select>
+//               </div>
+//               <div>
+//                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">التاريخ</label>
+//                 <input type="date" className={ic} value={makeupForm.date}
+//                   onChange={e => updateMakeupField('date', e.target.value)}/>
+//               </div>
+//             </div>
+//             {/* <div>
+//               <label className="block text-xs font-semibold text-slate-500 mb-1.5">منطقة الطالب الزمنية</label>
+//               <select className={ic} value={makeupForm.timezone} onChange={e => updateMakeupField('timezone', e.target.value)}>
+//                 {TIMEZONES.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+//               </select>
+//             </div> */}
+//             <div className="grid grid-cols-2 gap-3">
+//               <div>
+//                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">وقت الطالب</label>
+//                 <input type="time" className={ic} value={makeupForm.studentTime}
+//                   onChange={e => updateMakeupField('studentTime', e.target.value)}/>
+//               </div>
+//               <div>
+//                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+//                   توقيت مصر <span className="text-purple-500 font-normal">⚡ تلقائي</span>
+//                 </label>
+//                 <div className={`${ic} bg-purple-50/70 border-purple-200 text-purple-700 font-mono`}>
+//                   {makeupForm.teacherTime || <span className="text-slate-400 font-normal text-xs">يُحسب تلقائياً</span>}
+//                 </div>
+//               </div>
+//             </div>
+//           </div>
+//           <div className="flex justify-end gap-3 mt-5 pt-4 border-t border-slate-100">
+//             <button onClick={() => setMakeupModal(false)}
+//               className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 text-sm">إلغاء</button>
+//             <button onClick={saveMakeup} disabled={!makeupForm.date || !makeupForm.studentTime}
+//               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-medium transition-all ${
+//                 makeupForm.date && makeupForm.studentTime
+//                   ? 'bg-gradient-to-r from-purple-600 to-purple-500 hover:shadow-md'
+//                   : 'bg-slate-300 cursor-not-allowed'
+//               }`}>
+//               <Clock size={14}/> تأكيد التعويض
+//             </button>
+//           </div>
+//         </Modal>
+//       )}
 
-      {/* Confirm */}
-      {confirm && (
-        <ConfirmDialog
-          message={confirm.type === 'makeup' ? 'هل تريد حذف ميعاد التعويض؟' : 'هل تريد حذف هذه الحلقة نهائياً؟'}
-          onConfirm={() => confirm.type === 'makeup' ? handleClearMakeup(confirm.id) : handleDeleteSession(confirm.id)}
-          onCancel={() => setConfirm(null)}
-        />
-      )}
-    </div>
-  )
-}
+//       {/* Confirm */}
+//       {confirm && (
+//         <ConfirmDialog
+//           message={confirm.type === 'makeup' ? 'هل تريد حذف ميعاد التعويض؟' : 'هل تريد حذف هذه الحلقة نهائياً؟'}
+//           onConfirm={() => confirm.type === 'makeup' ? handleClearMakeup(confirm.id) : handleDeleteSession(confirm.id)}
+//           onCancel={() => setConfirm(null)}
+//         />
+//       )}
+//     </div>
+//   )
+// }

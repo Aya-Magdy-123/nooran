@@ -6,22 +6,7 @@ import StudentSessionForm from '../../components/ui/StudentSessionForm'
 const DAYS_AR   = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']
 const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
 
-// const TIMEZONES = [
-//   { value: 'Africa/Cairo',        label: 'مصر (Cairo)' },
-//   { value: 'Asia/Riyadh',         label: 'السعودية' },
-//   { value: 'Asia/Dubai',          label: 'الإمارات' },
-//   { value: 'Asia/Kuwait',         label: 'الكويت' },
-//   { value: 'Africa/Tripoli',      label: 'ليبيا' },
-//   { value: 'Africa/Tunis',        label: 'تونس' },
-//   { value: 'Africa/Algiers',      label: 'الجزائر' },
-//   { value: 'Africa/Casablanca',   label: 'المغرب' },
-//   { value: 'Asia/Baghdad',        label: 'العراق' },
-//   { value: 'Asia/Amman',          label: 'الأردن' },
-//   { value: 'Asia/Beirut',         label: 'لبنان' },
-//   { value: 'Europe/London',       label: 'بريطانيا' },
-//   { value: 'America/New_York',    label: 'نيويورك' },
-//   { value: 'America/Los_Angeles', label: 'لوس أنجلوس' },
-// ]
+
 
 const SESSION_STATUS_STYLE = {
   confirmed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -168,11 +153,16 @@ const EMPTY_FORM = {
 }
 
 export default function AdminSessions() {
-  const {
-    sessions, sessionsLoading, sessionsError,
-    teachers, supervisors, programs,
-    addSession, updateSession, deleteSession, toggleFlag, updateMakeup,
-  } = useApp()
+const {
+  sessions, sessionsLoading, sessionsError,
+  sessionsPage, sessionsTotal, sessionsHasMore,
+  nextPage, prevPage,
+  teachers, supervisors, programs,
+  addSession, updateSession, deleteSession, toggleFlag, updateMakeup,
+} = useApp()
+
+const PAGE_SIZE  = 20
+const totalPages = Math.ceil(sessionsTotal / PAGE_SIZE)
 
   const [search,           setSearch]           = useState('')
   const [filterStatus,     setFilterStatus]     = useState('all')
@@ -499,6 +489,75 @@ export default function AdminSessions() {
           </table>
         </div>
       </div>
+
+      {/* Pagination */}
+{sessionsTotal > PAGE_SIZE && (
+  <div className="flex items-center justify-between px-2">
+
+    {/* معلومات */}
+    <p className="text-xs text-slate-400">
+      يعرض{' '}
+      <span className="font-semibold text-slate-600">
+        {(sessionsPage - 1) * PAGE_SIZE + 1}–{Math.min(sessionsPage * PAGE_SIZE, sessionsTotal)}
+      </span>
+      {' '}من{' '}
+      <span className="font-semibold text-slate-600">{sessionsTotal}</span>
+      {' '}حلقة
+    </p>
+
+    {/* أزرار */}
+    <div className="flex items-center gap-2">
+      <button
+        onClick={prevPage}
+        disabled={sessionsPage <= 1 || sessionsLoading}
+        className="flex items-center gap-1.5 px-4 py-2 text-sm border border-slate-200 rounded-xl bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 18l6-6-6-6"/>
+        </svg>
+        التالي
+      </button>
+
+      {/* رقم الصفحة */}
+      <div className="flex items-center gap-1">
+        {Array.from({ length: totalPages }, (_, i) => i + 1)
+          .filter(p => p === 1 || p === totalPages || Math.abs(p - sessionsPage) <= 1)
+          .reduce((acc, p, idx, arr) => {
+            if (idx > 0 && p - arr[idx - 1] > 1) acc.push('...')
+            acc.push(p)
+            return acc
+          }, [])
+          .map((p, i) =>
+            p === '...'
+              ? <span key={`dot-${i}`} className="px-1 text-slate-400 text-sm">…</span>
+              : <button
+                  key={p}
+                  onClick={async () => {
+                    // jump مش متاح في Firestore cursor-based — بس لو صفحة 1 نرجع للأول
+                    if (p === 1) { /* fetchSessions */ }
+                  }}
+                  className={`w-8 h-8 rounded-lg text-sm font-medium transition-all ${
+                    p === sessionsPage
+                      ? 'bg-teal-500 text-white shadow-sm'
+                      : 'text-slate-500 hover:bg-slate-100'
+                  }`}>
+                  {p}
+                </button>
+          )
+        }
+      </div>
+
+      <button
+        onClick={nextPage}
+        disabled={!sessionsHasMore || sessionsLoading}
+        className="flex items-center gap-1.5 px-4 py-2 text-sm border border-slate-200 rounded-xl bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm">
+        السابق
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M15 18l-6-6 6-6"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+)}
 
       {/* Modal إضافة/تعديل */}
       {modalOpen && (

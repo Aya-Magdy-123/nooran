@@ -1,14 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import {
   BookOpen, Clock, Users, ChevronDown, ChevronUp,
   Phone, CheckCircle, XCircle, Clock as ClockIcon,
   HelpCircle, RefreshCw, Pencil, X, Save
 } from 'lucide-react'
 import StudentSessionForm from '../../components/ui/StudentSessionForm'
+import { useApp } from '../../context/AppContext'   // ← استبدل BASE بالـ Context
 
-const BASE = "http://localhost:5000/api"
-
-// ─── Status Badge ───────────────────────────────────────────────
+// ─── Status Badge (بدون تغيير) ────────────────────────────────
 const StatusBadge = ({ status }) => {
   const config = {
     'active':    { icon: CheckCircle, className: 'bg-green-50 text-green-700 border-green-200',    label: 'نشط' },
@@ -25,62 +24,39 @@ const StatusBadge = ({ status }) => {
   )
 }
 
-// ─── Map session → form shape (زي AdminSessions) ───────────────
+// ─── Map session → form shape (بدون تغيير) ────────────────────
 const sessionToForm = (s) => ({
-  name:            s.studentName    || '',
-  phone:           s.studentPhone   || '',
-  country:         s.country        || '',
-  contactMethod:   s.contactMethod  || '',
-  teacherId:       s.teacherId      || '',
-  program:         s.program        || '',
-  status:          s.status         || 'trial',
-  trialDate:       s.trialDate      || '',
-  trialTime:       s.trialTime      || '',
-  trialTeacherTime:s.trialTeacherTime|| '',
-  regularDates:    s.regularDates   || [],
-  pauseType:       s.pauseType      || '',
-  pauseUntil:      s.pauseUntil     || '',
-  notes:           s.notes          || '',
-  flagged:         s.flagged        || false,
-  makeup:          s.makeup         ?? null,
-  _hasBeenActive:  ['active','paused','cancelled'].includes(s.status),
+  name:             s.studentName     || '',
+  phone:            s.studentPhone    || '',
+  country:          s.country         || '',
+  contactMethod:    s.contactMethod   || '',
+  teacherId:        s.teacherId       || '',
+  program:          s.program         || '',
+  status:           s.status          || 'trial',
+  trialDate:        s.trialDate       || '',
+  trialTime:        s.trialTime       || '',
+  trialTeacherTime: s.trialTeacherTime || '',
+  regularDates:     s.regularDates    || [],
+  pauseType:        s.pauseType       || '',
+  pauseUntil:       s.pauseUntil      || '',
+  notes:            s.notes           || '',
+  flagged:          s.flagged         || false,
+  makeup:           s.makeup          ?? null,
+  _hasBeenActive:   ['active', 'paused', 'cancelled'].includes(s.status),
 })
 
-// ─── Edit Modal ─────────────────────────────────────────────────
+// ─── Edit Modal ────────────────────────────────────────────────
 function EditModal({ session, teachers, programs, onClose, onSave }) {
-  const [form, setForm]     = useState(sessionToForm(session))
+  const { updateSession } = useApp()           // ← من Context مباشر
+  const [form, setForm]   = useState(sessionToForm(session))
   const [saving, setSaving] = useState(false)
 
   const handleSave = async () => {
     try {
       setSaving(true)
-      const teacher     = teachers?.find(t => t.id === form.teacherId)
-      const teacherName = teacher?.name || session.teacherName || ''
-
-      await fetch(`${BASE}/sessions/${session.id}`, {
-        method:  'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          studentName:   form.name,
-          studentPhone:  form.phone,
-          country:       form.country       || '',
-          contactMethod: form.contactMethod || '',
-          teacherId:     form.teacherId     || null,
-          teacherName,
-          program:       form.program       || '',
-          status:        form.status,
-          trialDate:     form.trialDate     || '',
-          trialTime:     form.trialTime     || '',
-          trialTeacherTime: form.trialTeacherTime || '',
-          regularDates:  form.regularDates  || [],
-          pauseType:     form.pauseType     || '',
-          pauseUntil:    form.pauseUntil    || '',
-          notes:         form.notes         || '',
-          flagged:       form.flagged       || false,
-          makeup:        form.makeup        ?? null,
-        }),
-      })
-      await onSave()
+      // updateSession(id, form, teacherName) — نفس signature الموجود في Context
+      await updateSession(session.id, form)
+      await onSave?.()
       onClose()
     } catch (err) {
       console.error(err)
@@ -91,8 +67,7 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden"
-           dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden" dir="rtl">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
@@ -127,11 +102,10 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
           </button>
           <button onClick={handleSave} disabled={saving}
             className="flex items-center gap-2 px-5 py-2 text-sm font-semibold bg-teal-500 hover:bg-teal-600 disabled:bg-teal-300 text-white rounded-xl transition-all shadow-sm">
-            {saving ? (
-              <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-            ) : (
-              <Save size={14} />
-            )}
+            {saving
+              ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+              : <Save size={14} />
+            }
             {saving ? 'جاري الحفظ...' : 'حفظ التعديلات'}
           </button>
         </div>
@@ -140,47 +114,44 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
   )
 }
 
-// ─── Main Component ─────────────────────────────────────────────
+// ─── Main Component ────────────────────────────────────────────
 export default function SupervisorHalaqas({ teachers, programs }) {
-  const [sessions, setSessions] = useState([])
-  const [loading, setLoading]   = useState(true)
-  const [error, setError]       = useState(null)
-  const [expanded, setExpanded] = useState({})
-  const [editSession, setEditSession] = useState(null)   // ← الحلقة اللي بنعدلها
+  // ← كل البيانات من Context — مش فيه fetch محلي خالص
+  const {
+    sessions,
+    sessionsLoading: loading,
+    sessionsError:   error,
+    fetchSessions,   // لو محتاج زر تحديث يدوي
+  } = useApp()
 
   const supervisorId = localStorage.getItem('uid')
 
-  const fetchSessions = async () => {
-    try {
-      setLoading(true); setError(null)
-      const res  = await fetch(`${BASE}/sessions/supervisor/${supervisorId}`)
-      if (!res.ok) throw new Error('فشل تحميل الحلقات')
-      setSessions(await res.json())
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
+  // فلتر الحلقات الخاصة بالمشرف ده فقط
+  const mySessions = useMemo(
+    () => sessions.filter(s => s.supervisorId === supervisorId && !s.isDeleted),
+    [sessions, supervisorId]
+  )
 
-  useEffect(() => { if (supervisorId) fetchSessions() }, [supervisorId])
+  const [expanded,    setExpanded]    = useState({})
+  const [editSession, setEditSession] = useState(null)
 
   const toggleExpand = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }))
 
-  // تجميع الحلقات حسب المعلم + الوقت
-  const grouped = sessions.reduce((acc, s) => {
-    const key = `${s.teacherId}_${s.trialTime || s.regularDates?.[0]?.time || ''}`
-    if (!acc[key]) acc[key] = {
-      key,
-      teacherName: s.teacherName || '—',
-      time:        s.trialTime || s.regularDates?.[0]?.time || '—',
-      sessions:    [],
-    }
-    acc[key].sessions.push(s)
-    return acc
-  }, {})
-
-  const groups = Object.values(grouped).sort((a, b) => a.time.localeCompare(b.time))
+  // تجميع حسب المعلم + الوقت
+  const groups = useMemo(() => {
+    const grouped = mySessions.reduce((acc, s) => {
+      const key = `${s.teacherId}_${s.trialTime || s.regularDates?.[0]?.time || ''}`
+      if (!acc[key]) acc[key] = {
+        key,
+        teacherName: s.teacherName || '—',
+        time:        s.trialTime || s.regularDates?.[0]?.time || '—',
+        sessions:    [],
+      }
+      acc[key].sessions.push(s)
+      return acc
+    }, {})
+    return Object.values(grouped).sort((a, b) => a.time.localeCompare(b.time))
+  }, [mySessions])
 
   const getStats = (sess) => ({
     active:    sess.filter(s => s.status === 'active').length,
@@ -212,8 +183,9 @@ export default function SupervisorHalaqas({ teachers, programs }) {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-800">حلقاتي</h2>
-          <p className="text-sm text-gray-500 mt-0.5">{sessions.length} حلقة مخصصة لك</p>
+          <p className="text-sm text-gray-500 mt-0.5">{mySessions.length} حلقة مخصصة لك</p>
         </div>
+        {/* الـ Context بيعمل refetch تلقائي، بس تقدر تسيب الزرار */}
         <button onClick={fetchSessions}
           className="flex items-center gap-2 px-4 py-2 text-sm border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all">
           <RefreshCw size={14} /> تحديث
@@ -300,25 +272,21 @@ export default function SupervisorHalaqas({ teachers, programs }) {
                     <thead>
                       <tr className="bg-gray-50/80">
                         {['رقم الحلقة','الطالب','الهاتف','البلد','وسيلة التواصل','الموعد','الحالة',''].map((h, i) => (
-                          <th key={i} className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                            {h}
-                          </th>
+                          <th key={i} className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {group.sessions.map(s => {
-                        const dateDisplay = s.trialDate || s.regularDates?.[0]?.day || '—'
+                        const dateDisplay = s.trialDate || s.regularDates?.[0]?.day  || '—'
                         const timeDisplay = s.trialTime || s.regularDates?.[0]?.time || ''
                         return (
                           <tr key={s.id} className="hover:bg-gray-50/50 transition-colors">
-
                             <td className="px-5 py-4">
                               <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">
                                 #{s.sessionNumber}
                               </span>
                             </td>
-
                             <td className="px-5 py-4">
                               <div className="flex items-center gap-3">
                                 <div className="w-9 h-9 rounded-xl bg-teal-50 flex items-center justify-center text-sm font-bold text-teal-700 flex-shrink-0">
@@ -327,27 +295,20 @@ export default function SupervisorHalaqas({ teachers, programs }) {
                                 <span className="font-medium text-gray-800">{s.studentName || '—'}</span>
                               </div>
                             </td>
-
                             <td className="px-5 py-4 text-xs text-gray-500 font-mono">
                               {s.studentPhone
                                 ? <span className="flex items-center gap-1"><Phone size={11} /> {s.studentPhone}</span>
                                 : '—'}
                             </td>
-
-                            <td className="px-5 py-4 text-xs text-gray-500">{s.country || '—'}</td>
-
+                            <td className="px-5 py-4 text-xs text-gray-500">{s.country      || '—'}</td>
                             <td className="px-5 py-4 text-xs text-gray-500">{s.contactMethod || '—'}</td>
-
                             <td className="px-5 py-4">
                               <div className="flex flex-col gap-0.5">
                                 <span className="text-xs text-gray-700 font-mono">{dateDisplay}</span>
                                 {timeDisplay && <span className="text-xs text-gray-400 font-mono">{timeDisplay}</span>}
                               </div>
                             </td>
-
                             <td className="px-5 py-4"><StatusBadge status={s.status} /></td>
-
-                            {/* ── زرار التعديل ── */}
                             <td className="px-4 py-4">
                               <button
                                 onClick={(e) => { e.stopPropagation(); setEditSession(s) }}
@@ -356,7 +317,6 @@ export default function SupervisorHalaqas({ teachers, programs }) {
                                 <Pencil size={14} />
                               </button>
                             </td>
-
                           </tr>
                         )
                       })}
@@ -376,10 +336,9 @@ export default function SupervisorHalaqas({ teachers, programs }) {
           teachers={teachers}
           programs={programs}
           onClose={() => setEditSession(null)}
-          onSave={fetchSessions}
+          onSave={null}   // مش محتاج — Context بيعمل refetch تلقائي
         />
       )}
-
     </div>
   )
 }

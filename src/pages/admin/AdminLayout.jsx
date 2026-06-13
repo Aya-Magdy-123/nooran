@@ -1,14 +1,16 @@
 // src/pages/admin/AdminLayout.jsx
 import { Outlet } from 'react-router-dom'
-import { LayoutDashboard, Users, CalendarDays } from 'lucide-react'
+import { LayoutDashboard, Users, CalendarDays, Settings } from 'lucide-react'
 import DashboardLayout from '../../components/layout/DashboardLayout'
 
 const LINKS = [
   { divider: true, label: 'الرئيسي' },
-  { to: '/admin',          label: 'الداشبورد',        icon: LayoutDashboard, end: true },
+  { to: '/admin',           label: 'الداشبورد',        icon: LayoutDashboard, end: true },
   { divider: true, label: 'الإدارة' },
-  { to: '/admin/users',    label: 'إدارة المستخدمين', icon: Users },
-  { to: '/admin/sessions', label: ' الحلقات',   icon: CalendarDays },
+  { to: '/admin/users',     label: 'إدارة المستخدمين', icon: Users },
+  { to: '/admin/sessions',  label: 'الحلقات',          icon: CalendarDays },
+  { divider: true, label: 'الحساب' },
+  { to: '/admin/settings',  label: 'الإعدادات',        icon: Settings },
 ]
 
 export default function AdminLayout() {

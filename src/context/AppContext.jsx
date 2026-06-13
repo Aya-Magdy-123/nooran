@@ -1,48 +1,49 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import * as SupervisorsService from '../services/supervisorsService'
+import * as TeachersService    from '../services/teachersService'
+import * as ProgramsService    from '../services/programsService'
+import * as SessionsService    from '../services/sessionsService'
+import * as DistributionService from '../services/distributionService'
+
 
 const AppContext = createContext(null)
-
-const BASE = "http://localhost:5000/api" // ← غير للـ URL بتاعك
-
-// helpers
-const mapSupervisor = (s) => ({ ...s, status: s.isActive ? 'active' : 'absent' })
+const mapSupervisor = s => ({ ...s, status: s.isActive ? 'active' : 'absent' })
 
 export function AppProvider({ children }) {
 
-  // ─── Supervisors ───────────────────────────────────────────────
-  const [supervisors, setSupervisors]               = useState([])
+  // ─── States ────────────────────────────────────────────────
+  const [supervisors,       setSupervisors]       = useState([])
   const [supervisorsLoading, setSupervisorsLoading] = useState(true)
-  const [supervisorsError, setSupervisorsError]     = useState(null)
+  const [supervisorsError,   setSupervisorsError]   = useState(null)
 
-  // ─── Teachers ──────────────────────────────────────────────────
-  const [teachers, setTeachers]               = useState([])
+  const [teachers,       setTeachers]       = useState([])
   const [teachersLoading, setTeachersLoading] = useState(true)
-  const [teachersError, setTeachersError]     = useState(null)
+  const [teachersError,   setTeachersError]   = useState(null)
 
-  // ─── Programs ──────────────────────────────────────────────────
-  const [programs, setPrograms]               = useState([])
+  const [programs,       setPrograms]       = useState([])
   const [programsLoading, setProgramsLoading] = useState(true)
-  const [programsError, setProgramsError]     = useState(null)
+  const [programsError,   setProgramsError]   = useState(null)
 
-  // ─── Students ──────────────────────────────────────────────────
-  const [students, setStudents]               = useState([])
-  const [studentsLoading, setStudentsLoading] = useState(true)
-  const [studentsError, setStudentsError]     = useState(null)
-
-  // ───  sessions ──────────────────────────────────────────────────
-  const [postponeRequests, setPostponeRequests]     = useState([])
-  const [halaqas, setHalaqas]                       = useState([])
-  const [sessions, setSessions]               = useState([])
+const [sessions,        setSessions]        = useState([])
 const [sessionsLoading, setSessionsLoading] = useState(true)
-const [sessionsError, setSessionsError]     = useState(null)
+const [sessionsError,   setSessionsError]   = useState(null)
+const [sessionsPage,    setSessionsPage]    = useState(1)
+const [sessionsTotal,   setSessionsTotal]   = useState(0)
+const [sessionsLastDoc, setSessionsLastDoc] = useState(null)
+const [sessionsHasMore, setSessionsHasMore] = useState(false)
+// cursor stack — كل عنصر هو lastDoc للصفحة اللي قبلها
+const [cursorStack,     setCursorStack]     = useState([])
 
-  // ─── Fetch functions ───────────────────────────────────────────
+const PAGE_SIZE = 20
+
+  const [postponeRequests, setPostponeRequests] = useState([])
+  const [halaqas,          setHalaqas]          = useState([])
+
+  // ─── Fetch ─────────────────────────────────────────────────
   const fetchSupervisors = useCallback(async () => {
     try {
       setSupervisorsLoading(true); setSupervisorsError(null)
-      const res = await fetch(`${BASE}/supervisors`)
-      if (!res.ok) throw new Error("فشل تحميل المشرفين")
-      const data = await res.json()
+      const data = await SupervisorsService.getSupervisors()
       setSupervisors(data.map(mapSupervisor))
     } catch (err) { setSupervisorsError(err.message) }
     finally { setSupervisorsLoading(false) }
@@ -51,9 +52,7 @@ const [sessionsError, setSessionsError]     = useState(null)
   const fetchTeachers = useCallback(async () => {
     try {
       setTeachersLoading(true); setTeachersError(null)
-      const res = await fetch(`${BASE}/teachers`)
-      if (!res.ok) throw new Error("فشل تحميل المعلمين")
-      setTeachers(await res.json())
+      setTeachers(await TeachersService.getTeachers())
     } catch (err) { setTeachersError(err.message) }
     finally { setTeachersLoading(false) }
   }, [])
@@ -61,250 +60,138 @@ const [sessionsError, setSessionsError]     = useState(null)
   const fetchPrograms = useCallback(async () => {
     try {
       setProgramsLoading(true); setProgramsError(null)
-      const res = await fetch(`${BASE}/programs`)
-      if (!res.ok) throw new Error("فشل تحميل البرامج")
-      setPrograms(await res.json())
+      setPrograms(await ProgramsService.getPrograms())
     } catch (err) { setProgramsError(err.message) }
     finally { setProgramsLoading(false) }
   }, [])
 
-  const fetchStudents = useCallback(async () => {
-    try {
-      setStudentsLoading(true); setStudentsError(null)
-      const res = await fetch(`${BASE}/students`)
-      if (!res.ok) throw new Error("فشل تحميل الطلاب")
-      setStudents(await res.json())
-    } catch (err) { setStudentsError(err.message) }
-    finally { setStudentsLoading(false) }
-  }, [])
+ const fetchSessions = useCallback(async () => {
+  try {
+    setSessionsLoading(true); setSessionsError(null)
+    const [{ sessions, lastDoc, hasMore }, total] = await Promise.all([
+      SessionsService.getSessionsPage(),
+      SessionsService.getSessionsCount(),
+    ])
+    setSessions(sessions)
+    setSessionsLastDoc(lastDoc)
+    setSessionsHasMore(hasMore)
+    setSessionsTotal(total)
+    setSessionsPage(1)
+    setCursorStack([])
+  } catch (err) { setSessionsError(err.message) }
+  finally { setSessionsLoading(false) }
+}, [])
+
+const nextPage = async () => {
+  if (!sessionsHasMore || sessionsLoading) return
+  try {
+    setSessionsLoading(true)
+    const { sessions, lastDoc, hasMore } = await SessionsService.getSessionsPage(sessionsLastDoc)
+    setCursorStack(p => [...p, sessionsLastDoc])   // احفظ cursor الصفحة الحالية
+    setSessions(sessions)
+    setSessionsLastDoc(lastDoc)
+    setSessionsHasMore(hasMore)
+    setSessionsPage(p => p + 1)
+  } catch (err) { setSessionsError(err.message) }
+  finally { setSessionsLoading(false) }
+}
+
+const prevPage = async () => {
+  if (sessionsPage <= 1 || sessionsLoading) return
+  try {
+    setSessionsLoading(true)
+    const stack      = [...cursorStack]
+    const prevCursor = stack.length > 1 ? stack[stack.length - 2] : null
+    const { sessions, lastDoc, hasMore } = await SessionsService.getSessionsPage(prevCursor)
+    stack.pop()
+    setCursorStack(stack)
+    setSessions(sessions)
+    setSessionsLastDoc(lastDoc)
+    setSessionsHasMore(hasMore)
+    setSessionsPage(p => p - 1)
+  } catch (err) { setSessionsError(err.message) }
+  finally { setSessionsLoading(false) }
+}
+
+
+
+  const redistributeShift = async (shift) => {
+  await DistributionService.redistributeShift(shift)
+  await fetchSessions()
+}
 
   useEffect(() => {
     fetchSupervisors()
     fetchTeachers()
     fetchPrograms()
-    fetchStudents()
-  }, [fetchSupervisors, fetchTeachers, fetchPrograms, fetchStudents])
+    fetchSessions()
+  }, [fetchSupervisors, fetchTeachers, fetchPrograms, fetchSessions])
 
-  // ─── Supervisors CRUD ──────────────────────────────────────────
+  // ─── Supervisors CRUD ──────────────────────────────────────
   const addSupervisor = async (form) => {
-    await fetch(`${BASE}/supervisors`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...form, isActive: form.status === 'active' }),
-    })
+    await SupervisorsService.addSupervisor({ ...form, isActive: form.status === 'active' })
     await fetchSupervisors()
   }
   const updateSupervisor = async (s) => {
-    await fetch(`${BASE}/supervisors/${s.id}`, {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: s.name, phone: s.phone, shift: s.shift, isActive: s.status === 'active' }),
+    await SupervisorsService.updateSupervisor(s.id, {
+      name: s.name, phone: s.phone, shift: s.shift, isActive: s.status === 'active'
     })
     await fetchSupervisors()
   }
-  const deleteSupervisor  = async (id) => { await fetch(`${BASE}/supervisors/${id}`, { method: "DELETE" }); await fetchSupervisors() }
-  const restoreSupervisor = async (id) => { await fetch(`${BASE}/supervisors/${id}/restore`, { method: "PATCH" }); await fetchSupervisors() }
-  const toggleAbsent      = async (id) => { await fetch(`${BASE}/supervisors/${id}/toggle-absent`, { method: "PATCH" }); await fetchSupervisors() }
+  const deleteSupervisor  = async (id) => { await SupervisorsService.deleteSupervisor(id);  await fetchSupervisors() }
+  const restoreSupervisor = async (id) => { await SupervisorsService.restoreSupervisor(id); await fetchSupervisors() }
+  const toggleAbsent      = async (id) => { await SupervisorsService.toggleAbsent(id);      await fetchSupervisors(); await fetchSessions() }
 
-  // ─── Teachers CRUD ─────────────────────────────────────────────
-  const addTeacher = async (form) => {
-    await fetch(`${BASE}/teachers`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: form.name, phone: form.phone, program: form.program, shift: form.shift }),
-    })
-    await fetchTeachers()
+  // ─── Teachers CRUD ─────────────────────────────────────────
+  const addTeacher    = async (form) => { await TeachersService.addTeacher(form);         await fetchTeachers() }
+  const updateTeacher = async (t)    => { await TeachersService.updateTeacher(t.id, t);   await fetchTeachers() }
+  const deleteTeacher = async (id)   => { await TeachersService.deleteTeacher(id);        await fetchTeachers() }
+
+  // ─── Programs CRUD ─────────────────────────────────────────
+  const addProgram    = async (form) => { await ProgramsService.addProgram(form);         await fetchPrograms() }
+  const updateProgram = async (p)    => { await ProgramsService.updateProgram(p.id, p);   await fetchPrograms() }
+  const deleteProgram = async (p)    => { await ProgramsService.deleteProgram(p.id);      await fetchPrograms() }
+
+  // ─── Sessions CRUD ─────────────────────────────────────────
+  const addSession = async (form, teacherName) => {
+    const teacher = teachers.find(t => t.id === form.teacherId)
+    const result  = await SessionsService.addSession(form, teacher?.name || teacherName || '')
+    await fetchSessions()
+    return result
   }
-  const updateTeacher = async (t) => {
-    await fetch(`${BASE}/teachers/${t.id}`, {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: t.name, phone: t.phone, program: t.program, shift: t.shift }),
-    })
-    await fetchTeachers()
+  const updateSession = async (id, form, teacherName) => {
+    const teacher = teachers.find(t => t.id === form.teacherId)
+    await SessionsService.updateSession(id, form, teacher?.name || teacherName || '')
+    await fetchSessions()
   }
-  const deleteTeacher = async (id) => { await fetch(`${BASE}/teachers/${id}`, { method: "DELETE" }); await fetchTeachers() }
+  const deleteSession  = async (id)          => { await SessionsService.deleteSession(id);        await fetchSessions() }
+  const toggleFlag     = async (id)          => { await SessionsService.toggleFlag(id);           await fetchSessions() }
+  const updateMakeup   = async (id, makeup)  => { await SessionsService.updateMakeup(id, makeup); await fetchSessions() }
 
-  // ─── Programs CRUD ─────────────────────────────────────────────
-  const addProgram = async (form) => {
-    await fetch(`${BASE}/programs`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: form.name, description: form.description, image: form.image }),
-    })
-    await fetchPrograms()
-  }
-  const updateProgram = async (p) => {
-    await fetch(`${BASE}/programs/${p.id}`, {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: p.name, description: p.description, image: p.image }),
-    })
-    await fetchPrograms()
-  }
-  const deleteProgram = async (p) => { await fetch(`${BASE}/programs/${p.id}`, { method: "DELETE" }); await fetchPrograms() }
-
-  // ─── Students CRUD ─────────────────────────────────────────────
-// const addStudent = async (form) => {
-//   await fetch(`${BASE}/students`, {
-//     method: "POST",
-//     headers: { "Content-Type": "application/json" },
-//     body: JSON.stringify({
-//       name: form.name,
-//       phone: form.phone,
-//       country: form.country || '',   // ← جديد
-//       status: form.status,
-//       teacherId: form.teacherId,
-//       program: form.program,
-//       notes: form.notes || '',
-//       sessions: form.sessions || [],
-//       contactMethod: form.contactMethod || '',
-//       // sessionNumber مش بتبعته — الباك اند هو اللي بيحسبه
-//     }),
-//   })
-//   await fetchStudents()
-// }
-
-// const updateStudent = async (s) => {
-//   await fetch(`${BASE}/students/${s.id}`, {
-//     method: "PUT",
-//     headers: { "Content-Type": "application/json" },
-//     body: JSON.stringify({
-//       name:          s.name,
-//       phone:         s.phone         || '',
-//       country:       s.country       || '',
-//       status:        s.status,
-//       teacherId:     s.teacherId     || null,   // ← string أو null
-//       program:       s.program       || '',
-//       notes:         s.notes         || '',     // ← الاتنين عشان في فرق في التسمية
-//       sessions:      s.sessions      || [],
-//       contactMethod: s.contactMethod || '',
-//       regularDates:  s.regularDates  || [],
-//       trialDate:     s.trialDate     || '',
-//       trialTime:     s.trialTime     || '',
-//       pauseType:     s.pauseType     || '',
-//       pauseUntil:    s.pauseUntil    || '',
-//     }),
-//   })
-//   await fetchStudents()
-// }
-//   const deleteStudent = async (id) => { await fetch(`${BASE}/students/${id}`, { method: "DELETE" }); await fetchStudents() }
-
-  // ─── Halaqas (لسه mock) ────────────────────────────────────────
-  const addHalaqa    = (h)  => setHalaqas(p => [...p, { ...h, id: Date.now() }])
-  const updateHalaqa = (h)  => setHalaqas(p => p.map(x => x.id === h.id ? h : x))
-  const deleteHalaqa = (id) => setHalaqas(p => p.filter(x => x.id !== id))
-
-  // ─── Sessions (لسه mock) ───────────────────────────────────────
-// ─── Sessions ──────────────────────────────────────────────────
-
-
-const fetchSessions = useCallback(async () => {
-  try {
-    setSessionsLoading(true); setSessionsError(null)
-    const res = await fetch(`${BASE}/sessions`)
-    if (!res.ok) throw new Error("فشل تحميل الحلقات")
-    const data = await res.json()
-    setSessions(data.filter(s => !s.isDeleted))
-  } catch (err) { setSessionsError(err.message) }
-  finally { setSessionsLoading(false) }
-}, [])
-
-useEffect(() => {
-  fetchSupervisors()
-  fetchTeachers()
-  fetchPrograms()
-  fetchStudents()
-  fetchSessions()   // ← أضفها
-}, [fetchSupervisors, fetchTeachers, fetchPrograms, fetchStudents, fetchSessions])
-
-const addSession = async (form, teacherName, supervisorId, supervisorName) => {
-  const res = await fetch(`${BASE}/sessions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      studentName:    form.name,
-      studentPhone:   form.phone,
-      country:        form.country       || '',
-      contactMethod:  form.contactMethod || '',
-      teacherId:      form.teacherId     || null,
-      teacherName:    teacherName        || '',
-      supervisorId:   supervisorId       || null,
-      supervisorName: supervisorName     || '',
-      program:        form.program       || '',
-      status:         form.status,
-      trialDate:      form.trialDate     || '',
-      trialTime:      form.trialTime     || '',
-      regularDates:   form.regularDates  || [],
-      pauseType:      form.pauseType     || '',
-      pauseUntil:     form.pauseUntil    || '',
-      notes:          form.notes         || '',
-      flagged:        false,
-      makeup:         null,
-    }),
-  })
-  const data = await res.json()
-  await fetchSessions()
-  return data
-}
-
-const updateSession = async (id, form, teacherName) => {
-  await fetch(`${BASE}/sessions/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      studentName:   form.name,
-      studentPhone:  form.phone,
-      country:       form.country       || '',
-      contactMethod: form.contactMethod || '',
-      teacherId:     form.teacherId     || null,
-      teacherName:   teacherName        || '',
-      program:       form.program       || '',
-      status:        form.status,
-      trialDate:     form.trialDate     || '',
-      trialTime:     form.trialTime     || '',
-      regularDates:  form.regularDates  || [],
-      pauseType:     form.pauseType     || '',
-      pauseUntil:    form.pauseUntil    || '',
-      notes:         form.notes         || '',
-      flagged:       form.flagged       || false,
-      makeup:        form.makeup        ?? null,
-    }),
-  })
-  await fetchSessions()
-}
-
-const deleteSession  = async (id) => { await fetch(`${BASE}/sessions/${id}`, { method: "DELETE" }); await fetchSessions() }
-const toggleFlag     = async (id) => { await fetch(`${BASE}/sessions/${id}/flag`, { method: "PATCH" }); await fetchSessions() }
-const updateMakeup   = async (id, makeup) => {
-  await fetch(`${BASE}/sessions/${id}/makeup`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ makeup }),
-  })
-  await fetchSessions()
-}
-
-  // ─── Postpone ──────────────────────────────────────────────────
+  // ─── Postpone (لسه local) ──────────────────────────────────
   const resolvePostpone = (id, newDate, newTime) =>
     setPostponeRequests(p => p.map(x =>
       x.id === id ? { ...x, status: 'resolved', newDate, newTime } : x))
 
+  const addHalaqa    = h   => setHalaqas(p => [...p, { ...h, id: Date.now() }])
+  const updateHalaqa = h   => setHalaqas(p => p.map(x => x.id === h.id ? h : x))
+  const deleteHalaqa = id  => setHalaqas(p => p.filter(x => x.id !== id))
+
   return (
     <AppContext.Provider value={{
-      // Supervisors
       supervisors, supervisorsLoading, supervisorsError,
       addSupervisor, updateSupervisor, deleteSupervisor, toggleAbsent, restoreSupervisor,
-      // Teachers
       teachers, teachersLoading, teachersError,
       addTeacher, updateTeacher, deleteTeacher,
-      // Programs
       programs, programsLoading, programsError,
       addProgram, updateProgram, deleteProgram,
-      // Students
-      // students, studentsLoading, studentsError,
-      // addStudent, updateStudent, deleteStudent,
-      // Halaqas
-      halaqas, addHalaqa, updateHalaqa, deleteHalaqa,
-      // Sessions
-      sessions, sessionsLoading, sessionsError,
+      sessions, sessionsLoading, sessionsError, fetchSessions,
+      sessionsPage, sessionsTotal, sessionsHasMore,
+      nextPage, prevPage,
+ 
       addSession, updateSession, deleteSession, toggleFlag, updateMakeup,
-      // Postpone
-      postponeRequests, resolvePostpone,
+      halaqas, addHalaqa, updateHalaqa, deleteHalaqa,
+      postponeRequests, resolvePostpone,redistributeShift,
     }}>
       {children}
     </AppContext.Provider>

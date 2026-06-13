@@ -12,7 +12,8 @@ import SupervisorLayout   from './pages/supervisor/SupervisorLayout'
 import SupervisorPostpone from './pages/supervisor/SupervisorPostpone'
 import SupervisorHalaqas from './pages/supervisor/SupervisorHalaqas'
 import Login from './pages/login/Login'
-import Supervisorsessions from './pages/supervisor/Supervisorsessions'
+// import Supervisorsessions from './pages/supervisor/Supervisorsessions'
+import Settings from './pages/Settings'
 
 export default function App() {
   return (
@@ -27,6 +28,8 @@ export default function App() {
           <Route index         element={<AdminOverview />} />
           <Route path="users"    element={<AdminUsers />} />
           <Route path="sessions" element={<AdminSessions />} />
+            <Route path="settings"  element={<Settings />} />   {/* ← جديد */}
+
         </Route>
 
         {/* Supervisor */}
@@ -34,7 +37,12 @@ export default function App() {
           <Route index             element={<SupervisorHalaqas />} />
           <Route path="students"   element={<AdminUsers />} />
           <Route path="postpone"   element={<SupervisorPostpone />} />
-          <Route path="sessions"   element={<Supervisorsessions />} />
+          {/* <Route path="sessions"   element={<Supervisorsessions />} />
+           */}
+          <Route path="sessions" element={<AdminSessions />} />
+
+          <Route path="settings"  element={<Settings />} />   {/* ← جديد */}
+
         </Route>
 
         <Route path="*" element={<Navigate to="/login" />} />
