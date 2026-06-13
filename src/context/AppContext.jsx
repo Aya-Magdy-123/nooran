@@ -70,7 +70,7 @@ const PAGE_SIZE = 20
     setSessionsLoading(true); setSessionsError(null)
     const [{ sessions, lastDoc, hasMore }, total] = await Promise.all([
       SessionsService.getSessionsPage(),
-      SessionsService.getSessionsCount(),
+      // SessionsService.getSessionsCount(),
     ])
     setSessions(sessions)
     setSessionsLastDoc(lastDoc)
