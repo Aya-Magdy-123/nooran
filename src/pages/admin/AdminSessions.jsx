@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { Plus, Pencil, Trash2, Star, Filter, BookOpen, Clock, Calendar, User } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import StudentSessionForm from '../../components/ui/StudentSessionForm'
+import MakeupModal from '../../components/ui/MakeupModal'
 
 const DAYS_AR   = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']
 const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
@@ -159,6 +160,7 @@ const {
   nextPage, prevPage,
   teachers, supervisors, programs,
   addSession, updateSession, deleteSession, toggleFlag, updateMakeup,
+    postponeRequests, postponeLoading, resolvePostpone, 
 } = useApp()
 
 const PAGE_SIZE  = 20
@@ -183,6 +185,8 @@ const totalPages = Math.ceil(sessionsTotal / PAGE_SIZE)
   const [confirm, setConfirm] = useState(null)
 
   const [showPostpone, setShowPostpone] = useState(false)
+  // 1. أضف الـ state ده مع باقي الـ states
+const [postponeResolving, setPostponeResolving] = useState(null)
 
   // ── Filters ──
   const filtered = useMemo(() => sessions.filter(s => {
@@ -268,11 +272,19 @@ const totalPages = Math.ceil(sessionsTotal / PAGE_SIZE)
     })
   }
 
-  const saveMakeup = async () => {
-    await updateMakeup(makeupSession.id, { ...makeupForm, confirmed: true })
-    setMakeupModal(false)
+ // 2. صحح saveMakeup
+const saveMakeup = async () => {
+  console.log('Saving makeup for session ID:', makeupSession.id)   // ← أضف ده مؤقتاً
+  await updateMakeup(makeupSession.id, { ...makeupForm, confirmed: true })
+
+  if (postponeResolving) {
+    console.log('Resolving postpone for:', postponeResolving)   // ← وده
+    await resolvePostpone(postponeResolving, makeupForm.date, makeupForm.studentTime)
+    setPostponeResolving(null)
   }
 
+  setMakeupModal(false)
+}
   const formValid = !!(form.name?.trim() && form.teacherId && (
     form.status === 'trial'  ? form.trialDate && form.trialTime :
     form.status === 'active' ? form.regularDates?.some(d => d.day && d.time) : true
@@ -318,17 +330,19 @@ const totalPages = Math.ceil(sessionsTotal / PAGE_SIZE)
   </div>
 
   {/* ← زرار طلبات التأجيل */}
-  <button
-    onClick={() => setShowPostpone(p => !p)}
-    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border transition-all whitespace-nowrap ${
-      showPostpone
-        ? 'bg-orange-50 border-orange-300 text-orange-700'
-        : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-    }`}>
-    <Clock size={15}/>
-    طلبات التأجيل
-    <span className="bg-orange-100 text-orange-600 text-xs font-bold px-1.5 py-0.5 rounded-lg">0</span>
-  </button>
+<button
+  onClick={() => setShowPostpone(p => !p)}
+  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border transition-all whitespace-nowrap ${
+    showPostpone
+      ? 'bg-orange-50 border-orange-300 text-orange-700'
+      : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+  }`}>
+  <Clock size={15}/>
+  طلبات التأجيل
+  <span className="bg-orange-100 text-orange-600 text-xs font-bold px-1.5 py-0.5 rounded-lg">
+    {postponeRequests.filter(r => r.status === 'pending').length}
+  </span>
+</button>
 
   <button onClick={openAdd}
     className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl shadow-sm hover:shadow-md transition-all font-medium text-sm whitespace-nowrap">
@@ -391,13 +405,86 @@ const totalPages = Math.ceil(sessionsTotal / PAGE_SIZE)
       </div>
 
       {/* طلبات التأجيل */}
+{/* طلبات التأجيل */}
 {showPostpone && (
-  <div className="bg-white rounded-2xl border border-orange-100 shadow-sm p-12 text-center">
-    <div className="w-14 h-14 rounded-2xl bg-orange-50 flex items-center justify-center mx-auto mb-4">
-      <Clock size={24} className="text-orange-400"/>
-    </div>
-    <p className="text-slate-500 font-medium">لا يوجد طلبات تأجيل</p>
-    <p className="text-xs text-slate-400 mt-1">ستظهر هنا طلبات التأجيل عند وصولها</p>
+  <div className="bg-white rounded-2xl border border-orange-100 shadow-sm overflow-hidden">
+    {postponeRequests.length === 0 ? (
+      <div className="p-12 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-orange-50 flex items-center justify-center mx-auto mb-4">
+          <Clock size={24} className="text-orange-400"/>
+        </div>
+        <p className="text-slate-500 font-medium">لا يوجد طلبات تأجيل</p>
+        <p className="text-xs text-slate-400 mt-1">ستظهر هنا طلبات التأجيل عند وصولها</p>
+      </div>
+    ) : (
+      <table className="w-full">
+        <thead>
+          <tr className="bg-orange-50/60 border-b border-orange-100">
+            {['الطالب', 'الهاتف', 'المعلم', 'الموعد الأصلي', 'الحالة', 'إجراء'].map(h => (
+              <th key={h} className="px-4 py-3 text-right text-xs font-semibold text-orange-700 whitespace-nowrap">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-orange-50">
+          {postponeRequests.map(r => (
+            <tr key={r.id} className="hover:bg-orange-50/30 transition-colors">
+              <td className="px-4 py-3.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-orange-100 flex items-center justify-center text-sm font-bold text-orange-700 flex-shrink-0">
+                    {r.studentName?.charAt(0) || '؟'}
+                  </div>
+                  <span className="font-medium text-slate-800 text-sm">{r.studentName || '—'}</span>
+                </div>
+              </td>
+              <td className="px-4 py-3.5 text-xs text-slate-500 font-mono">{r.studentPhone || '—'}</td>
+              <td className="px-4 py-3.5 text-sm text-slate-600">{r.teacherName || '—'}</td>
+              <td className="px-4 py-3.5">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-slate-700 font-mono">{r.originalDate}</span>
+                  <span className="text-xs text-slate-500 font-mono">{r.originalTime}</span>
+                </div>
+              </td>
+              <td className="px-4 py-3.5">
+                <span className={`text-xs border px-2.5 py-1 rounded-lg font-semibold ${
+                  r.status === 'pending'
+                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : 'bg-green-50 text-green-700 border-green-200'
+                }`}>
+                  {r.status === 'pending' ? '⏳ معلّق' : '✓ تم الحل'}
+                </span>
+                {r.status === 'resolved' && r.newDate && (
+                  <div className="text-xs text-green-600 mt-1">
+                    {r.newDate} — {r.newTime}
+                  </div>
+                )}
+              </td>
+              <td className="px-4 py-3.5">
+                {r.status === 'pending' ? (
+                <button
+  onClick={() => {
+    const session = sessions.find(s => s.id === r.sessionId)
+    setMakeupSession(session || {
+      id:            r.sessionId,
+      studentName:   r.studentName,
+      sessionNumber: '—',
+      makeup:        null,
+    })
+    setMakeupForm({ day:'', date:'', studentTime:'', teacherTime:'', timezone:'Africa/Cairo' })
+    setMakeupModal(true)
+    setPostponeResolving(r.id)
+  }}
+  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
+  <Plus size={12}/> تحديد تعويض
+</button>
+                ) : (
+                  <span className="text-slate-300 text-xs">—</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
   </div>
 )}
 
@@ -633,69 +720,15 @@ const totalPages = Math.ceil(sessionsTotal / PAGE_SIZE)
       )}
 
       {/* Modal التعويض */}
-      {makeupModal && makeupSession && (
-        <Modal
-          title={
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-purple-50 text-purple-600"><Clock size={18}/></div>
-              <div>
-                <p className="text-base font-bold text-slate-800">حصة تعويض</p>
-                <p className="text-xs text-slate-500">{makeupSession.studentName} — #{makeupSession.sessionNumber}</p>
-              </div>
-            </div>
-          }
-          onClose={() => setMakeupModal(false)}>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">اليوم</label>
-                <select className={ic} value={makeupForm.day} onChange={e => updateMakeupField('day', e.target.value)}>
-                  <option value="">اختر اليوم...</option>
-                  {DAYS_AR.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">التاريخ</label>
-                <input type="date" className={ic} value={makeupForm.date}
-                  onChange={e => updateMakeupField('date', e.target.value)}/>
-              </div>
-            </div>
-            {/* <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5">منطقة الطالب الزمنية</label>
-              <select className={ic} value={makeupForm.timezone} onChange={e => updateMakeupField('timezone', e.target.value)}>
-                {TIMEZONES.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
-              </select>
-            </div> */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">وقت الطالب</label>
-                <input type="time" className={ic} value={makeupForm.studentTime}
-                  onChange={e => updateMakeupField('studentTime', e.target.value)}/>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">
-                  توقيت مصر <span className="text-purple-500 font-normal">⚡ تلقائي</span>
-                </label>
-                <div className={`${ic} bg-purple-50/70 border-purple-200 text-purple-700 font-mono`}>
-                  {makeupForm.teacherTime || <span className="text-slate-400 font-normal text-xs">يُحسب تلقائياً</span>}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="flex justify-end gap-3 mt-5 pt-4 border-t border-slate-100">
-            <button onClick={() => setMakeupModal(false)}
-              className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 text-sm">إلغاء</button>
-            <button onClick={saveMakeup} disabled={!makeupForm.date || !makeupForm.studentTime}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-medium transition-all ${
-                makeupForm.date && makeupForm.studentTime
-                  ? 'bg-gradient-to-r from-purple-600 to-purple-500 hover:shadow-md'
-                  : 'bg-slate-300 cursor-not-allowed'
-              }`}>
-              <Clock size={14}/> تأكيد التعويض
-            </button>
-          </div>
-        </Modal>
-      )}
+     {makeupModal && makeupSession && (
+      <MakeupModal
+      session={makeupSession}
+      form={makeupForm}
+      setForm={setMakeupForm}
+      onClose={() => setMakeupModal(false)}
+      onSave={saveMakeup}
+    />
+  )}
 
       {/* Confirm */}
       {confirm && (

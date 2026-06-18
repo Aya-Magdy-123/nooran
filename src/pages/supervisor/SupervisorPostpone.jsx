@@ -3,7 +3,6 @@ import { useState } from 'react'
 import { CalendarCheck, BookOpen, Clock, AlertCircle, Filter, Plus } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { Modal, Badge, PageHeader, EmptyState } from '../../components/ui'
-// import { DAY_NAMES } from '../../data/mockData'
 
 const MY_SUPERVISOR_ID = 1
 const DAYS_SHORT = ['أحد', 'اثن', 'ثلا', 'أرب', 'خمي', 'جمع', 'سبت']

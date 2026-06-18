@@ -1,5 +1,8 @@
 import { UserX, BookOpen, Clock, CalendarClock } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
+import { collection, query, where, onSnapshot } from 'firebase/firestore'
+import { db } from '../../firebase'
+import { useEffect, useState } from 'react'
 
 function todayStr() {
   const d = new Date()
@@ -16,43 +19,7 @@ function formatArabicDate(dateStr) {
 }
 
 // ── Dummy Data طلبات التأجيل ──────────────────────────────────
-const DUMMY_POSTPONE = [
-  {
-    id: 1,
-    studentName:  'أحمد محمود',
-    studentPhone: '01000000010',
-    teacherName:  'الشيخ كريم',
-    originalDate: '2026-06-13',
-    originalTime: '14:00',
-    reason:       'ظروف عائلية',
-    status:       'pending',
-    createdAt:    '2026-06-12',
-  },
-  {
-    id: 2,
-    studentName:  'فاطمة علي',
-    studentPhone: '01000000011',
-    teacherName:  'الشيخ طارق',
-    originalDate: '2026-06-13',
-    originalTime: '15:30',
-    reason:       'سفر',
-    status:       'pending',
-    createdAt:    '2026-06-12',
-  },
-  {
-    id: 3,
-    studentName:  'يوسف حسن',
-    studentPhone: '01000000012',
-    teacherName:  'الشيخ أحمد',
-    originalDate: '2026-06-11',
-    originalTime: '10:00',
-    reason:       'مرض',
-    status:       'resolved',
-    newDate:      '2026-06-15',
-    newTime:      '10:00',
-    createdAt:    '2026-06-10',
-  },
-]
+
 
 export default function AdminOverview() {
   const { supervisors, teachers, sessions } = useApp()
@@ -71,6 +38,20 @@ export default function AdminOverview() {
 
   const noshowSessions = sessions.filter(s => s.status === 'cancelled')
 
+  // في الـ component
+const [postponeRequests, setPostponeRequests] = useState([])
+
+useEffect(() => {
+  const q = query(
+    collection(db, 'postponeRequests'),
+    where('status', '==', 'pending')
+  )
+  const unsub = onSnapshot(q, snap => {
+    setPostponeRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  })
+  return unsub
+}, [])
+
   const supervisorSessions = activeSups.map(sup => {
     const supSessions = todaySessions
       .filter(s => s.supervisorId === sup.id)
@@ -83,8 +64,8 @@ export default function AdminOverview() {
     return { supervisorId: sup.id, supervisorName: sup.name, sessions: supSessions }
   }).filter(sup => sup.sessions.length > 0)
 
-  const pendingPostpone  = DUMMY_POSTPONE.filter(r => r.status === 'pending')
-  const resolvedPostpone = DUMMY_POSTPONE.filter(r => r.status === 'resolved')
+  const pendingPostpone  = postponeRequests.filter(r => r.status === 'pending')
+  const resolvedPostpone = postponeRequests.filter(r => r.status === 'resolved')
 
   return (
     <div className="flex flex-col gap-7">
@@ -229,7 +210,7 @@ export default function AdminOverview() {
           </div>
         </div>
 
-        {DUMMY_POSTPONE.length === 0 ? (
+        {postponeRequests.length === 0 ? (
           <p className="text-sm text-gray-300 text-center py-6">لا توجد طلبات تأجيل</p>
         ) : (
           <div className="flex flex-col divide-y divide-gray-50">

@@ -1,7 +1,8 @@
 
 import {
   collection, getDocs, query, where,addDoc, updateDoc, doc,
-  orderBy, limit, startAfter, getCountFromServer
+  orderBy, limit, startAfter, getCountFromServer,
+  getDoc
 } from "firebase/firestore"
 import { db } from "../firebase"
 

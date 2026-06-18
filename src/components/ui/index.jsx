@@ -1,6 +1,5 @@
 // src/components/ui/index.jsx
 import { X, AlertTriangle } from 'lucide-react'
-import { STATUS_LABELS, STATUS_BADGE } from '../../data/mockData'
 
 // ── Modal ───────────────────────────────────────────────────────────────────
 export function Modal({ title, onClose, children, wide }) {

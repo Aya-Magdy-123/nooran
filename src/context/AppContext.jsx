@@ -4,6 +4,8 @@ import * as TeachersService    from '../services/teachersService'
 import * as ProgramsService    from '../services/programsService'
 import * as SessionsService    from '../services/sessionsService'
 import * as DistributionService from '../services/distributionService'
+import * as PostponeService from '../services/postponeService'
+
 
 
 const AppContext = createContext(null)
@@ -36,8 +38,10 @@ const [cursorStack,     setCursorStack]     = useState([])
 
 const PAGE_SIZE = 20
 
-  const [postponeRequests, setPostponeRequests] = useState([])
-  const [halaqas,          setHalaqas]          = useState([])
+const [postponeRequests,       setPostponeRequests]       = useState([])
+const [postponeLoading,        setPostponeLoading]        = useState(true)
+const [postponeError,          setPostponeError]          = useState(null)
+const [halaqas,          setHalaqas]          = useState([])
 
   // ─── Fetch ─────────────────────────────────────────────────
   const fetchSupervisors = useCallback(async () => {
@@ -80,6 +84,14 @@ const PAGE_SIZE = 20
     setCursorStack([])
   } catch (err) { setSessionsError(err.message) }
   finally { setSessionsLoading(false) }
+}, [])
+
+   const fetchPostponeRequests = useCallback(async () => {
+  try {
+    setPostponeLoading(true); setPostponeError(null)
+    setPostponeRequests(await PostponeService.getPostponeRequests())
+  } catch (err) { setPostponeError(err.message) }
+  finally { setPostponeLoading(false) }
 }, [])
 
 const nextPage = async () => {
@@ -125,7 +137,8 @@ const prevPage = async () => {
     fetchTeachers()
     fetchPrograms()
     fetchSessions()
-  }, [fetchSupervisors, fetchTeachers, fetchPrograms, fetchSessions])
+     fetchPostponeRequests() 
+  }, [fetchSupervisors, fetchTeachers, fetchPrograms, fetchSessions, fetchPostponeRequests])
 
   // ─── Supervisors CRUD ──────────────────────────────────────
   const addSupervisor = async (form) => {
@@ -166,12 +179,23 @@ const prevPage = async () => {
   }
   const deleteSession  = async (id)          => { await SessionsService.deleteSession(id);        await fetchSessions() }
   const toggleFlag     = async (id)          => { await SessionsService.toggleFlag(id);           await fetchSessions() }
-  const updateMakeup   = async (id, makeup)  => { await SessionsService.updateMakeup(id, makeup); await fetchSessions() }
 
-  // ─── Postpone (لسه local) ──────────────────────────────────
-  const resolvePostpone = (id, newDate, newTime) =>
-    setPostponeRequests(p => p.map(x =>
-      x.id === id ? { ...x, status: 'resolved', newDate, newTime } : x))
+const updateMakeup = async (id, makeup) => {
+  await SessionsService.updateMakeup(id, makeup)
+  // لو فيه makeup فعلي (مش حذف) — اقفل أي طلب تأجيل مرتبط
+  if (makeup?.date) {
+    await PostponeService.resolvePostponeBySessionId(id, makeup.date, makeup.studentTime)
+  }
+  await fetchSessions()
+  await fetchPostponeRequests()   // ← حدّث القائمة كذلك
+}
+  // ─── Postpone  ──────────────────────────────────
+const resolvePostpone = async (id, newDate, newTime) => {
+  await PostponeService.resolvePostponeRequest(id, newDate, newTime)
+  await fetchPostponeRequests()
+}
+
+
 
   const addHalaqa    = h   => setHalaqas(p => [...p, { ...h, id: Date.now() }])
   const updateHalaqa = h   => setHalaqas(p => p.map(x => x.id === h.id ? h : x))
@@ -191,7 +215,8 @@ const prevPage = async () => {
  
       addSession, updateSession, deleteSession, toggleFlag, updateMakeup,
       halaqas, addHalaqa, updateHalaqa, deleteHalaqa,
-      postponeRequests, resolvePostpone,redistributeShift,
+       resolvePostpone,redistributeShift,postponeRequests,
+       postponeLoading, postponeError, fetchPostponeRequests,
     }}>
       {children}
     </AppContext.Provider>
