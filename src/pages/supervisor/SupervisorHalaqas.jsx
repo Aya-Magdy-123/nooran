@@ -186,13 +186,15 @@ function isMakeupPast(makeup) {
 
 function MakeupCell({ session, onOpen, onClearRequest }) {
   const { makeup } = session
-  const eligible = ['confirmed','completed','scheduled','noshow','active','trial'].includes(session.status)
+
+  // ← الشرط الصحيح: يظهر بس لو فيه طلب تأجيل معلّق ومفيش makeup مؤكد
+  const eligible = session.attendanceStatus === 'postponed' && !makeup?.confirmed
 
   if (!makeup?.confirmed) {
-    if (!eligible) return <span className="text-slate-300 text-xs">—</span>
+    if (!eligible) return null   // ← مش —، خالص ميظهرش حاجة
     return (
       <button onClick={() => onOpen(session)}
-        className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
+        className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
         <Plus size={12}/> تعويض
       </button>
     )
@@ -212,21 +214,12 @@ function MakeupCell({ session, onOpen, onClearRequest }) {
   }
 
   return (
-    <div className="flex flex-col gap-0.5 group relative min-w-[130px]">
+    <div className="flex flex-col gap-0.5 group relative min-w-[100px]">
       <div className="flex items-center gap-1.5">
         <span className="w-2 h-2 rounded-full bg-purple-400 flex-shrink-0 animate-pulse"/>
         <span className="text-xs font-semibold text-purple-700">{makeup.day}</span>
       </div>
       <span className="text-xs text-slate-600 font-mono">{makeup.date}</span>
-      <span className="text-xs text-slate-500">
-        {makeup.studentTime}
-        {makeup.teacherTime && makeup.teacherTime !== makeup.studentTime &&
-          <span className="text-purple-500"> (مصر: {makeup.teacherTime})</span>}
-      </span>
-      <button onClick={() => onClearRequest(session.id)}
-        className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs hover:bg-red-200 transition-all">
-        ✕
-      </button>
     </div>
   )
 }
@@ -258,6 +251,13 @@ const [postponeResolving, setPostponeResolving] = useState(null)
   const [editSession, setEditSession] = useState(null);
 
   const toggleExpand = (id) => setExpanded((p) => ({ ...p, [id]: !p[id] }));
+
+  const [confirm, setConfirm] = useState(null)
+
+const handleClearMakeup = async (id) => {
+  await updateMakeup(id, null)
+  setConfirm(null)
+}
 
   // تجميع حسب المعلم + الوقت
   const groups = useMemo(() => {
@@ -598,6 +598,22 @@ const saveMakeup = async () => {
       onSave={saveMakeup}
     />
   )}
+
+  {/* Confirm Dialog */}
+{confirm && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+    <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full space-y-4">
+      <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center mx-auto text-2xl">🗑️</div>
+      <p className="text-slate-700 text-center font-medium">هل تريد حذف ميعاد التعويض؟</p>
+      <div className="flex gap-3 justify-center">
+        <button onClick={() => setConfirm(null)}
+          className="px-5 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 text-sm">إلغاء</button>
+        <button onClick={() => handleClearMakeup(confirm.id)}
+          className="px-5 py-2 rounded-xl text-white text-sm font-medium bg-red-500 hover:bg-red-600">تأكيد الحذف</button>
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 }

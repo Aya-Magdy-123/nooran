@@ -99,7 +99,9 @@ function FilterSelect({ value, onChange, options }) {
 
 function MakeupCell({ session, onOpen, onClearRequest }) {
   const { makeup } = session
-  const eligible = ['confirmed','completed','scheduled','noshow','active','trial'].includes(session.status)
+
+  // ← الشرط الصحيح: يظهر بس لو فيه طلب تأجيل معلّق ومفيش makeup مؤكد
+  const eligible = session.attendanceStatus === 'postponed' && !makeup?.confirmed
 
   if (!makeup?.confirmed) {
     if (!eligible) return <span className="text-slate-300 text-xs">—</span>
