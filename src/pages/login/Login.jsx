@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../../firebase";
+import { auth } from "../../../firebase";
 import { useNavigate } from "react-router-dom";
 import logo from "../../assets/logo.png";
-import { login } from '../../services/authService'
-
+import { login } from "../../services/authService";
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -12,9 +11,6 @@ const Login = () => {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-
-
-  
 
   // const handleLogin = async (e) => {
   //   e.preventDefault();
@@ -53,28 +49,26 @@ const Login = () => {
   //     setLoading(false);
   //   }
   // };
-const handleLogin = async (e) => {
-  e.preventDefault()
-  try {
-    setLoading(true)
-    const userData = await login(email, password)
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      const userData = await login(email, password);
 
-    // حفظ في localStorage
-    localStorage.setItem("uid",  userData.uid)
-    localStorage.setItem("role", userData.role)
-    localStorage.setItem("name", userData.name)
+      // حفظ في localStorage
+      localStorage.setItem("uid", userData.uid);
+      localStorage.setItem("role", userData.role);
+      localStorage.setItem("name", userData.name);
 
-    // توجيه حسب الدور
-    if (userData.role === "admin")      navigate("/admin")
-    if (userData.role === "supervisor") navigate("/supervisor")
-
-  } catch (err) {
-    setError("بيانات غلط أو المستخدم مش موجود")
-  } finally {
-    setLoading(false)
-  }
-}
-
+      // توجيه حسب الدور
+      if (userData.role === "admin") navigate("/admin");
+      if (userData.role === "supervisor") navigate("/supervisor");
+    } catch (err) {
+      setError("بيانات غلط أو المستخدم مش موجود");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">

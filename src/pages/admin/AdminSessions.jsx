@@ -104,7 +104,7 @@ function MakeupCell({ session, onOpen, onClearRequest }) {
   const eligible = session.attendanceStatus === 'postponed' && !makeup?.confirmed
 
   if (!makeup?.confirmed) {
-    if (!eligible) return <span className="text-slate-300 text-xs">—</span>
+    // if (eligible) return <span className="text-slate-300 text-xs">—</span>
     return (
       <button onClick={() => onOpen(session)}
         className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">

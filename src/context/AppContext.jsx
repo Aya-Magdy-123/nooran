@@ -1,3 +1,5 @@
+import { onAuthStateChanged } from 'firebase/auth'
+import { auth } from '../../firebase'
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import * as SupervisorsService from '../services/supervisorsService'
 import * as TeachersService    from '../services/teachersService'
@@ -13,6 +15,8 @@ const mapSupervisor = s => ({ ...s, status: s.isActive ? 'active' : 'absent' })
 
 export function AppProvider({ children }) {
 
+    const [authReady, setAuthReady] = useState(false)
+  const [currentUser, setCurrentUser] = useState(null)
   // ─── States ────────────────────────────────────────────────
   const [supervisors,       setSupervisors]       = useState([])
   const [supervisorsLoading, setSupervisorsLoading] = useState(true)
@@ -43,6 +47,14 @@ const [postponeLoading,        setPostponeLoading]        = useState(true)
 const [postponeError,          setPostponeError]          = useState(null)
 const [halaqas,          setHalaqas]          = useState([])
 
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user)
+      setAuthReady(true)
+    })
+    return unsub
+  }, [])
   // ─── Fetch ─────────────────────────────────────────────────
   const fetchSupervisors = useCallback(async () => {
     try {
@@ -126,19 +138,20 @@ const prevPage = async () => {
 }
 
 
-
   const redistributeShift = async (shift) => {
   await DistributionService.redistributeShift(shift)
   await fetchSessions()
 }
 
-  useEffect(() => {
+ useEffect(() => {
+    if (!authReady || !currentUser) return   // ← ميبدأش غير لما الأوث يكون جاهز ومسجل
+
     fetchSupervisors()
     fetchTeachers()
     fetchPrograms()
     fetchSessions()
-     fetchPostponeRequests() 
-  }, [fetchSupervisors, fetchTeachers, fetchPrograms, fetchSessions, fetchPostponeRequests])
+    fetchPostponeRequests()
+  }, [authReady, currentUser, fetchSupervisors, fetchTeachers, fetchPrograms, fetchSessions, fetchPostponeRequests])
 
   // ─── Supervisors CRUD ──────────────────────────────────────
   const addSupervisor = async (form) => {
@@ -203,6 +216,7 @@ const resolvePostpone = async (id, newDate, newTime) => {
 
   return (
     <AppContext.Provider value={{
+       authReady, currentUser,
       supervisors, supervisorsLoading, supervisorsError,
       addSupervisor, updateSupervisor, deleteSupervisor, toggleAbsent, restoreSupervisor,
       teachers, teachersLoading, teachersError,

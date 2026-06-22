@@ -4,62 +4,66 @@ import {
   updatePassword,
   EmailAuthProvider,
   reauthenticateWithCredential,
-} from "firebase/auth"
-import { doc, getDoc } from "firebase/firestore"
-import { auth, db } from "../firebase"
+} from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "../../firebase";
 
 // ── Login ─────────────────────────────────────────────────────
 export async function login(email, password) {
-  const userCredential = await signInWithEmailAndPassword(auth, email, password)
-  const uid = userCredential.user.uid
+  const userCredential = await signInWithEmailAndPassword(
+    auth,
+    email,
+    password,
+  );
+  const uid = userCredential.user.uid;
 
   // دور في supervisors
-  let userDoc = await getDoc(doc(db, "supervisors", uid))
+  let userDoc = await getDoc(doc(db, "supervisors", uid));
   if (userDoc.exists()) {
-    const data = userDoc.data()
-    return { uid, role: "supervisor", ...data }
+    const data = userDoc.data();
+    return { uid, role: "supervisor", ...data };
   }
 
   // دور في admins
-  userDoc = await getDoc(doc(db, "admins", uid))
+  userDoc = await getDoc(doc(db, "admins", uid));
   if (userDoc.exists()) {
-    const data = userDoc.data()
-    return { uid, role: "admin", ...data }
+    const data = userDoc.data();
+    return { uid, role: "admin", ...data };
   }
 
-  throw new Error("المستخدم مش موجود في النظام")
+  throw new Error("المستخدم مش موجود في النظام");
 }
 
 // ── Logout ────────────────────────────────────────────────────
 export async function logout() {
-  await signOut(auth)
-  localStorage.clear()
+  await signOut(auth);
+  localStorage.clear();
 }
 
 // ── Get current user data ─────────────────────────────────────
 export async function getCurrentUser() {
-  const user = auth.currentUser
-  if (!user) return null
+  const user = auth.currentUser;
+  if (!user) return null;
 
-  const uid = user.uid
+  const uid = user.uid;
 
-  let userDoc = await getDoc(doc(db, "supervisors", uid))
-  if (userDoc.exists()) return { uid, role: "supervisor", ...userDoc.data() }
+  let userDoc = await getDoc(doc(db, "supervisors", uid));
+  if (userDoc.exists()) return { uid, role: "supervisor", ...userDoc.data() };
 
-  userDoc = await getDoc(doc(db, "admins", uid))
-  if (userDoc.exists()) return { uid, role: "admin", ...userDoc.data() }
+  userDoc = await getDoc(doc(db, "admins", uid));
+  if (userDoc.exists()) return { uid, role: "admin", ...userDoc.data() };
 
-  return null
+  return null;
 }
 
 // ── Change password ───────────────────────────────────────────
 export async function changePassword(currentPassword, newPassword) {
-  const user = auth.currentUser
-  if (!user) throw new Error("مش مسجل دخول")
+  const user = auth.currentUser;
+  if (!user) throw new Error("مش مسجل دخول");
 
   // لازم تعمل re-authenticate الأول
-  const credential = EmailAuthProvider.credential(user.email, currentPassword)
-  await reauthenticateWithCredential(user, credential)
+  const credential = EmailAuthProvider.credential(user.email, currentPassword);
+  await reauthenticateWithCredential(user, credential);
 
-  await updatePassword(user, newPassword)
+  await updatePassword(user, newPassword);
 }

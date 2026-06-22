@@ -1,4 +1,5 @@
 // src/App.jsx
+
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AppProvider } from './context/AppContext'
 
@@ -15,38 +16,38 @@ import Login from './pages/login/Login'
 // import Supervisorsessions from './pages/supervisor/Supervisorsessions'
 import Settings from './pages/Settings'
 
+import ProtectedRoute from './components/ProtectedRoute'
+
+
 export default function App() {
   return (
-    <AppProvider>
+<AppProvider>
       <Routes>
-        {/* <Route path="/" element={<Home />} /> */}
-         <Route path="/login" element={<Login />} /> 
-
+        <Route path="/login" element={<Login />} />
 
         {/* Admin */}
-        <Route path="/admin" element={<AdminLayout />}>
+        <Route path="/admin" element={
+          <ProtectedRoute><AdminLayout /></ProtectedRoute>
+        }>
           <Route index         element={<AdminOverview />} />
           <Route path="users"    element={<AdminUsers />} />
           <Route path="sessions" element={<AdminSessions />} />
-            <Route path="settings"  element={<Settings />} />   {/* ← جديد */}
-
+          <Route path="settings" element={<Settings />} />
         </Route>
 
         {/* Supervisor */}
-         <Route path="/supervisor" element={<SupervisorLayout />}>
-          <Route index             element={<SupervisorHalaqas />} />
-          <Route path="students"   element={<AdminUsers />} />
-          <Route path="postpone"   element={<SupervisorPostpone />} />
-          {/* <Route path="sessions"   element={<Supervisorsessions />} />
-           */}
+        <Route path="/supervisor" element={
+          <ProtectedRoute><SupervisorLayout /></ProtectedRoute>
+        }>
+          <Route index           element={<SupervisorHalaqas />} />
+          <Route path="students" element={<AdminUsers />} />
+          <Route path="postpone" element={<SupervisorPostpone />} />
           <Route path="sessions" element={<AdminSessions />} />
-
-          <Route path="settings"  element={<Settings />} />   {/* ← جديد */}
-
+          <Route path="settings" element={<Settings />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/login" />} />
       </Routes>
-     </AppProvider>
+    </AppProvider>
   )
 }
