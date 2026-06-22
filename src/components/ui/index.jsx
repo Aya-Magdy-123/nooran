@@ -1,6 +1,31 @@
 // src/components/ui/index.jsx
 import { X, AlertTriangle } from 'lucide-react'
 
+// ← أضف ده فوق، قبل أي export function
+const STATUS_BADGE = {
+  active:    'badge bg-emerald-50 text-emerald-700 border border-emerald-200',
+  trial:     'badge bg-amber-50 text-amber-700 border border-amber-200',
+  paused:    'badge bg-orange-50 text-orange-700 border border-orange-200',
+  cancelled: 'badge bg-red-50 text-red-600 border border-red-200',
+  pending:   'badge bg-blue-50 text-blue-700 border border-blue-200',
+  resolved:  'badge bg-green-50 text-green-700 border border-green-200',
+  confirmed: 'badge bg-green-50 text-green-700 border border-green-200',
+  no_show:   'badge bg-red-50 text-red-600 border border-red-200',
+  postponed: 'badge bg-amber-50 text-amber-700 border border-amber-200',
+}
+
+const STATUS_LABELS = {
+  active:    'نشط',
+  trial:     'تجريبي',
+  paused:    'متوقف',
+  cancelled: 'ملغي',
+  pending:   'قيد الانتظار',
+  resolved:  'تم الحل',
+  confirmed: 'مؤكد',
+  no_show:   'غياب',
+  postponed: 'طلب تأجيل',
+}
+
 // ── Modal ───────────────────────────────────────────────────────────────────
 export function Modal({ title, onClose, children, wide }) {
   return (
