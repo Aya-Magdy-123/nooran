@@ -609,7 +609,7 @@ const saveMakeup = async () => {
           <table className="w-full">
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-100">
-                {['رقم الحلقة','الموعد','الطالب','البلد','المعلم','المشرف','الحالة','التعويض','إجراء'].map(h => (
+                {['رقم الحلقة','الموعد','الطالب','البلد','المعلم', !filterMonthYear && 'المشرف','الحالة','التعويض','إجراء'].map(h => (
                   <th key={h} className="px-4 py-3.5 text-right text-xs font-semibold text-slate-500 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -669,15 +669,18 @@ const saveMakeup = async () => {
                     </td>
 
                     {/* المشرف */}
+                    
                     <td className="px-4 py-3.5">
-                      {s.supervisorName ? (
+                      {!filterMonthYear &&(
+                      s.supervisorName ? (
                         <div className="flex items-center gap-1.5">
                           <div className="w-6 h-6 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
                             <User size={12} className="text-indigo-500"/>
                           </div>
                           <span className="text-sm text-slate-600 whitespace-nowrap">{s.supervisorName}</span>
                         </div>
-                      ) : <span className="text-slate-300 text-sm">—</span>}
+                      ) : <span className="text-slate-300 text-sm">—</span>)
+              }
                     </td>
 
                     {/* الحالة */}
