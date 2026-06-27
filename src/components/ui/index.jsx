@@ -46,7 +46,7 @@ export function Modal({ title, onClose, children, wide }) {
 }
 
 // ── Confirm Dialog ──────────────────────────────────────────────────────────
-export function ConfirmDialog({ message, onConfirm, onCancel, danger, isLoading, setIsLoading }) {
+export function ConfirmDialog({ message, onConfirm, onCancel, danger, isLoading, setIsLoading, confirmText, extraContent }) {
   return (
     <div className="modal-overlay">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
@@ -54,22 +54,29 @@ export function ConfirmDialog({ message, onConfirm, onCancel, danger, isLoading,
           <div className={`p-2 rounded-xl ${danger ? 'bg-red-50' : 'bg-green-50'}`}>
             <AlertTriangle size={20} className={danger ? 'text-red-600' : 'text-green-600'} />
           </div>
-          <p className="text-sm text-gray-700 leading-relaxed mt-0.5">{message}</p>
+          <div className="flex-1 mt-0.5">
+            <p className="text-sm text-gray-700 leading-relaxed">{message}</p>
+            {extraContent && (
+              <div className="mt-3">
+                {extraContent}
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex justify-end gap-3">
           <button onClick={onCancel} className="btn-secondary">إلغاء</button>
-        <button 
-          className={`${danger ? 'btn-danger' : 'btn-success'} ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`} 
-          onClick={onConfirm}
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>
-              جاري التنفيذ...
-            </div>
-          ) : 'تأكيد'}
-        </button>
+          <button
+            className={`${danger ? 'btn-danger' : 'btn-success'} ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+            onClick={onConfirm}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>
+                جاري التنفيذ...
+              </div>
+            ) : confirmText || 'تأكيد'}
+          </button>
         </div>
       </div>
     </div>

@@ -24,6 +24,7 @@ function SupervisorsTab() {
   const [saveError,     setSaveError]     = useState('')
   const [restock,       setRestock]       = useState(null)
   const [isLoading,     setIsLoading]     = useState(false)
+  const [returnDate,    setReturnDate]    = useState('')   // ← جديد
 
   const [form, setForm] = useState({
     name: '', email: '', phone: '', shift: 'morning', status: 'active'
@@ -80,6 +81,9 @@ function SupervisorsTab() {
       setSaveLoading(false)
     }
   }
+
+  // ── تاريخ اليوم بصيغة YYYY-MM-DD لحد أدنى لـ input date ──
+  const todayStr = new Date().toISOString().split('T')[0]
 
   return (
     <div className="space-y-5">
@@ -139,7 +143,13 @@ function SupervisorsTab() {
                     <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold ${
                       s.status === 'active' ? 'bg-teal-50 text-teal-700' : 'bg-red-50 text-red-500'
                     }`}>{s.name.charAt(0)}</div>
-                    <span className="font-medium text-gray-800">{s.name}</span>
+                    <div>
+                      <span className="font-medium text-gray-800">{s.name}</span>
+                      {/* ← بيظهر تاريخ العودة تحت الاسم لو موجود */}
+                      {s.absentUntil && (
+                        <p className="text-xs text-red-400 mt-0.5">غائب حتى {s.absentUntil}</p>
+                      )}
+                    </div>
                   </div>
                 </td>
                 <td className="px-5 py-4 text-sm text-gray-500 font-mono">{s.phone}</td>
@@ -252,15 +262,45 @@ function SupervisorsTab() {
 
       {attendConfirm && (
         <ConfirmDialog
-          message={attendConfirm.supervisor.status === 'absent'
-            ? `هل تريد تسجيل "${attendConfirm.supervisor.name}" حاضراً؟`
-            : `هل تريد تسجيل "${attendConfirm.supervisor.name}" غائباً؟`}
+          message={
+            attendConfirm.supervisor.status === 'absent'
+              ? `هل تريد تسجيل "${attendConfirm.supervisor.name}" حاضراً؟`
+              : `هل تريد تسجيل "${attendConfirm.supervisor.name}" غائباً؟`
+          }
           confirmText={attendConfirm.supervisor.status === 'absent' ? 'تسجيل حاضر' : 'تسجيل غائب'}
           danger={attendConfirm.supervisor.status !== 'absent'}
-          onConfirm={async () => { await toggleAbsent(attendConfirm.supervisor.id); setAttendConfirm(null) }}
-          onCancel={() => setAttendConfirm(null)}
+          // ← date input بيظهر بس لما بيتسجل غائب
+          extraContent={attendConfirm.supervisor.status !== 'absent' ? (
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+                تاريخ العودة <span className="text-slate-400 font-normal"> </span>
+              </label>
+              <input
+                type="date"
+                value={returnDate}
+                min={todayStr}
+                onChange={e => setReturnDate(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-gray-700"
+              />
+              {returnDate && (
+                <p className="text-xs text-teal-600 mt-1.5">
+                  ✓ سيعود تلقائياً يوم {returnDate}
+                </p>
+              )}
+            </div>
+          ) : null}
+          onConfirm={async () => {
+            await toggleAbsent(attendConfirm.supervisor.id, returnDate || null)
+            setReturnDate('')
+            setAttendConfirm(null)
+          }}
+          onCancel={() => {
+            setReturnDate('')
+            setAttendConfirm(null)
+          }}
         />
       )}
+
       {confirm && (
         <ConfirmDialog
           message={`هل تريد حذف المشرف "${confirm.name}"؟`}
