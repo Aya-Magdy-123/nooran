@@ -42,11 +42,31 @@ function formatArabicDate(dateStr) {
 // ── Dummy Data طلبات التأجيل ──────────────────────────────────
 
 export default function AdminOverview() {
+  const[loadData, setLoadData]= useState(false);
+
    const {
     supervisors, supervisorsLoading,
     teachers,    teachersLoading,
-    sessions,    sessionsLoading,
+    sessionsPerDay, sessionsPerDayLoading, sessionsPerDayError, fetchSessionsPerDay
   } = useApp();
+
+  console.log(sessionsPerDay);
+
+  useEffect(()=>{
+    const fetchSessions = async () => {
+    try{
+    setLoadData(true);
+    await fetchSessionsPerDay();
+    setLoadData(false);
+    }
+    catch(e){
+      console.log(e.message);
+    }
+    }  
+    fetchSessions();
+  },[]);
+
+  
 
   const today = todayStr();
   const todayDayAr = DAYS_AR[new Date().getDay()];
@@ -58,14 +78,9 @@ export default function AdminOverview() {
     (s) => s.status !== "absent" && !s.isDeleted,
   );
 
-  const todaySessions = sessions.filter((s) => {
-    if (s.status === "trial") return s.trialDate === today;
-    if (s.status === "active")
-      return s.regularDates?.some((d) => d.day === todayDayAr);
-    return false;
-  });
 
-  const noshowSessions = sessions.filter((s) => s.status === "cancelled");
+
+  const noshowSessions = sessionsPerDay?.filter((s) => s.status === "cancelled");
 
   // في الـ component
   const [postponeRequests, setPostponeRequests] = useState([]);
@@ -83,8 +98,7 @@ export default function AdminOverview() {
 
   const supervisorSessions = activeSups
     .map((sup) => {
-      const supSessions = todaySessions
-        .filter((s) => s.supervisorId === sup.id)
+      const supSessions = sessionsPerDay?.filter((s) => s.supervisorId === sup.id)
         .map((s) => ({
           id: s.id,
           studentName: s.studentName || "—",
@@ -109,7 +123,7 @@ export default function AdminOverview() {
     (r) => r.status === "resolved",
   );
 
-  if (supervisorsLoading || teachersLoading || sessionsLoading) {
+  if (supervisorsLoading || teachersLoading || sessionsPerDayLoading) {
     return (
       <div className="flex items-center justify-center py-32 text-gray-400">
         <div className="animate-spin w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full ml-3"/>
@@ -128,18 +142,14 @@ export default function AdminOverview() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {[
             { label: "مشرفون نشطون", value: activeSups.length },
             {
               label: "معلمون",
               value: teachers.filter((t) => !t.isDeleted).length,
             },
-            {
-              label: "طلاب",
-              value: sessions.filter((s) => !s.isDeleted).length,
-            },
-            { label: "حلقات اليوم", value: todaySessions.length, accent: true },
+            { label: "حلقات اليوم", value: sessionsPerDay?.length, accent: true },
           ].map((s) => (
             <div
               key={s.label}
@@ -155,52 +165,52 @@ export default function AdminOverview() {
           ))}
         </div>
 
-        {/* Absent alert */}
-        {absentSups.length > 0 && (
-          <div className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl px-4 py-3 text-sm text-red-700">
-            <UserX size={15} className="shrink-0 mt-0.5" />
-            <div className="flex flex-col gap-2 w-full">
-              <span className="font-semibold">
-                غائبون اليوم ({absentSups.length})
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {absentSups.map((s) => (
-                  <div
-                    key={s.id}
-                    className="flex items-center gap-2 bg-white border border-red-100 rounded-xl px-3 py-1.5"
-                  >
-                    <div className="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center text-xs font-bold text-red-500">
-                      {s.name.charAt(0)}
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold text-red-700">
-                        {s.name}
-                      </div>
-                      <div className="text-xs text-red-400">
-                        {s.shift === "morning"
-                          ? "🌅 4ص - 12ظ"
-                          : s.shift === "afternoon"
-                            ? "🌞 12ظ - 8م"
-                            : "🌙 8م - 4ص"}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+     {/* Absent alert */}
+{absentSups.length > 0 && (
+  <div className="flex items-start gap-3 bg-gray-50 border border-orange-100 rounded-2xl px-4 py-3.5 text-sm text-orange-800">
+    <UserX size={16} className="shrink-0 mt-0.5 text-orange-500" />
+    <div className="flex flex-col gap-2.5 w-full">
+      <span className="font-semibold text-orange-800">
+        المشرفون الغائبون اليوم   ({absentSups.length})
+      </span>
+      <div className="flex flex-wrap gap-2">
+        {absentSups.map((s) => (
+          <div
+            key={s.id}
+            className="flex items-center gap-2 bg-white border border-orange-100 rounded-xl px-5 py-3 shadow-sm hover:shadow-md transition-shadow"
+          >
+            <div className="w-7 h-7 rounded-full bg-orange-100 flex items-center justify-center text-xs font-bold text-orange-600">
+              {s.name.charAt(0)}
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-700 mb-1">
+                {s.name}
+              </div>
+              <div className="text-xs text-slate-400">
+                {s.shift === "morning"
+                  ? "🌅 4ص - 12ظ"
+                  : s.shift === "afternoon"
+                    ? "🌞 12ظ - 8م"
+                    : "🌙 8م - 4ص"}
               </div>
             </div>
           </div>
-        )}
+        ))}
+      </div>
+    </div>
+  </div>
+)}
 
         {/* Row 1 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {/* توزيع الحلقات */}
-          <div className="bg-white rounded-2xl border border-gray-100 p-5">
+          <div className="bg-white rounded-2xl overflow-y-auto border border-gray-100 p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-gray-500">
                 توزيع الحلقات — اليوم
               </h2>
               <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-                {todaySessions.length} حلقة
+                {sessionsPerDay?.length} حلقة
               </span>
             </div>
             {supervisorSessions.length === 0 ? (
@@ -265,28 +275,28 @@ export default function AdminOverview() {
               {[
                 {
                   label: "نشطة",
-                  value: sessions.filter(
+                  value: sessionsPerDay?.filter(
                     (s) => s.status === "active" && !s.isDeleted,
                   ).length,
                   color: "bg-emerald-50 text-emerald-700",
                 },
                 {
                   label: "تجريبية",
-                  value: sessions.filter(
+                  value: sessionsPerDay?.filter(
                     (s) => s.status === "trial" && !s.isDeleted,
                   ).length,
                   color: "bg-amber-50 text-amber-700",
                 },
                 {
                   label: "متوقفة",
-                  value: sessions.filter(
+                  value: sessionsPerDay?.filter(
                     (s) => s.status === "paused" && !s.isDeleted,
                   ).length,
                   color: "bg-orange-50 text-orange-700",
                 },
                 {
                   label: "ملغية",
-                  value: sessions.filter(
+                  value: sessionsPerDay?.filter(
                     (s) => s.status === "cancelled" && !s.isDeleted,
                   ).length,
                   color: "bg-red-50 text-red-600",
@@ -301,11 +311,11 @@ export default function AdminOverview() {
                 </div>
               ))}
             </div>
-            {sessions.filter((s) => !s.supervisorId && !s.isDeleted).length >
+            {sessionsPerDay?.filter((s) => !s.supervisorId && !s.isDeleted).length >
               0 && (
               <div className="mt-4 flex items-center gap-2 bg-yellow-50 border border-yellow-100 rounded-xl px-3 py-2.5 text-xs text-yellow-700 font-medium">
                 ⚠️{" "}
-                {sessions.filter((s) => !s.supervisorId && !s.isDeleted).length}{" "}
+                {sessionsPerDay?.filter((s) => !s.supervisorId && !s.isDeleted).length}{" "}
                 حلقة بدون مشرف — يحتاج توزيع
               </div>
             )}

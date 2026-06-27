@@ -18,6 +18,7 @@ import {
 
 const COL = "supervisors";
 
+
 export async function getSupervisors() {
   const snap = await getDocs(collection(db, COL));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -43,6 +44,7 @@ export async function addSupervisor({ name, email, phone, shift, isActive }) {
     uid,
     createdAt: new Date().toISOString(),
   });
+  await redistributeShift(shift);
 
   return { id: uid, name, email, phone, isActive };
 }
@@ -51,12 +53,16 @@ export async function updateSupervisor(id, { name, phone, shift, isActive }) {
   await updateDoc(doc(db, COL, id), { name, phone, shift, isActive });
 }
 
-export async function deleteSupervisor(id) {
-  await updateDoc(doc(db, COL, id), { isDeleted: true });
+export async function deleteSupervisor(id, shift) {
+  await updateDoc(doc(db, COL, id), { isDeleted: true, isActive: false });
+  await redistributeShift(shift);
+
 }
 
-export async function restoreSupervisor(id) {
+export async function restoreSupervisor(id, shift) {
   await updateDoc(doc(db, COL, id), { isDeleted: false });
+  await redistributeShift(shift);
+
 }
 
 export async function toggleAbsent(id) {

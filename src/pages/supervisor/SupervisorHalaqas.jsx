@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   BookOpen,
   Clock,
@@ -19,6 +19,8 @@ import {
 import StudentSessionForm from "../../components/ui/StudentSessionForm";
 import { useApp } from "../../context/AppContext"; // ← استبدل BASE بالـ Context
 import MakeupModal from "../../components/ui/MakeupModal"; 
+import { createPortal } from "react-dom";
+import { useRef } from "react";
 
 // ─── Status Badge (بدون تغيير) ────────────────────────────────
 const StatusBadge = ({ status }) => {
@@ -78,6 +80,105 @@ const StatusBadge = ({ status }) => {
     </span>
   );
 };
+
+// ─── Attendance Status Dropdown (جديد) ─────────────────────────
+// ← بادج حالة الحضور + سهم بيفتح قائمة لتغيير الحالة يدويًا
+const ATTENDANCE_OPTIONS = ["confirmed", "no_show", "postponed", "pending"];
+
+
+
+function AttendanceStatusDropdown({ session }) {
+  const { updateAttendanceStatus } = useApp();
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+  const btnRef = useRef(null);
+
+  const current = session.attendanceStatus || "pending";
+
+  const handleToggle = (e) => {
+    e.stopPropagation();
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setPos({
+        top: rect.bottom + 4,
+        right: window.innerWidth - rect.right,
+      });
+    }
+    setOpen((p) => !p);
+  };
+
+  const handlePick = async (newStatus) => {
+    if (newStatus === current) {
+      setOpen(false);
+      return;
+    }
+    try {
+      setSaving(true);
+      await updateAttendanceStatus(session.id, newStatus);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div className="relative inline-block">
+      <button
+        ref={btnRef}
+        onClick={handleToggle}
+        disabled={saving}
+        className="flex items-center gap-1 rounded-full hover:opacity-80 transition-opacity disabled:opacity-50"
+      >
+        <StatusBadge status={current} />
+        {saving ? (
+          <div className="w-3 h-3 border-2 border-slate-300 border-t-slate-500 rounded-full animate-spin" />
+        ) : (
+          <ChevronDown size={12} className="text-slate-400" />
+        )}
+      </button>
+
+      {open &&
+        createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-[9998]"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpen(false);
+              }}
+            />
+            <div
+              className="fixed z-[9999] bg-white border border-slate-100 rounded-xl shadow-lg py-1 min-w-[150px]"
+              style={{ top: pos.top, right: pos.right }}
+              dir="rtl"
+            >
+              {ATTENDANCE_OPTIONS.map((opt) => (
+                <button
+                  key={opt}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handlePick(opt);
+                  }}
+                  className={`w-full text-right px-3 py-2 text-xs hover:bg-slate-50 transition-colors flex items-center justify-between gap-2 ${
+                    opt === current ? "bg-slate-50" : ""
+                  }`}
+                >
+                  <StatusBadge status={opt} />
+                  {opt === current && (
+                    <CheckCircle size={12} className="text-teal-500 flex-shrink-0" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </>,
+          document.body
+        )}
+    </div>
+  );
+}
 
 // ─── Map session → form shape (بدون تغيير) ────────────────────
 const sessionToForm = (s) => ({
@@ -226,26 +327,41 @@ function MakeupCell({ session, onOpen, onClearRequest }) {
 
 // ─── Main Component ────────────────────────────────────────────
 export default function SupervisorHalaqas({ teachers, programs }) {
-  // ← كل البيانات من Context — مش فيه fetch محلي خالص
+
+  const[loadData, setLoadData] = useState(false);
+
   const {
-    sessions,
-    sessionsLoading: loading,
-    sessionsError: error,
-    fetchSessions,
+    sessionsPerDay,
+    sessionsForSupervisorLoading: loading,
+    sessionsForSupervisorError: error,
+    fetchSessionsForSupervisor,
+    sessionsForSupervisor,
     updateMakeup,
     resolvePostpone,  // لو محتاج زر تحديث يدوي
   } = useApp();
 
   const supervisorId = localStorage.getItem("uid");
 
+  useEffect(()=>{
+    const fetchSessions = async () => {
+    try{
+    setLoadData(true);
+    await fetchSessionsForSupervisor(supervisorId);
+    setLoadData(false);
+    }
+    catch(e){
+      console.log(e.message);
+    }
+    }  
+    fetchSessions();
+  },[supervisorId]);
+
+  console.log(sessionsForSupervisor);
+  
+
 const [postponeResolving, setPostponeResolving] = useState(null)
 
-  // فلتر الحلقات الخاصة بالمشرف ده فقط
-  const mySessions = useMemo(
-    () =>
-      sessions.filter((s) => s.supervisorId === supervisorId && !s.isDeleted),
-    [sessions, supervisorId],
-  );
+ 
 
   const [expanded, setExpanded] = useState({});
   const [editSession, setEditSession] = useState(null);
@@ -261,21 +377,23 @@ const handleClearMakeup = async (id) => {
 
   // تجميع حسب المعلم + الوقت
   const groups = useMemo(() => {
-    const grouped = mySessions.reduce((acc, s) => {
-      const key = `${s.teacherId}_${s.trialTime || s.regularDates?.[0]?.time || ""}`;
-      if (!acc[key])
-        acc[key] = {
-          key,
-          teacherName: s.teacherName || "—",
-          time: s.trialTime || s.regularDates?.[0]?.time || "—",
-          sessions: [],
-        };
-      acc[key].sessions.push(s);
-      return acc;
-    }, {});
-    return Object.values(grouped).sort((a, b) => a.time.localeCompare(b.time));
-  }, [mySessions]);
+  if (!sessionsForSupervisor?.length) return []; // ← guard
 
+  const grouped = sessionsForSupervisor?.reduce((acc, s) => {
+    const key = `${s.teacherId}_${s.trialTime || s.regularDates?.[0]?.time || ""}`;
+    if (!acc[key])
+      acc[key] = {
+        key,
+        teacherName: s.teacherName || "—",
+        time: s.trialTime || s.regularDates?.[0]?.time || "—",
+        sessions: [],
+      };
+    acc[key].sessions.push(s);
+    return acc;
+  }, {});
+
+  return Object.values(grouped).sort((a, b) => a.time.localeCompare(b.time));
+}, [sessionsForSupervisor]);
   const getStats = (sess) => ({
     active: sess.filter((s) => s.status === "active").length,
     trial: sess.filter((s) => s.status === "trial").length,
@@ -321,7 +439,7 @@ const saveMakeup = async () => {
       <div className="text-center py-20">
         <p className="text-red-400 mb-3">⚠️ {error}</p>
         <button
-          onClick={fetchSessions}
+          onClick={()=> fetchSessionsForSupervisor(supervisorId)}
           className="text-sm text-teal-600 hover:underline"
         >
           إعادة المحاولة
@@ -336,12 +454,12 @@ const saveMakeup = async () => {
         <div>
           <h2 className="text-xl font-bold text-gray-800">حلقاتي</h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            {mySessions.length} حلقة مخصصة لك
+            {sessionsForSupervisor?.length} حلقة مخصصة لك
           </p>
         </div>
         {/* الـ Context بيعمل refetch تلقائي، بس تقدر تسيب الزرار */}
         <button
-          onClick={fetchSessions}
+          onClick={()=> fetchSessionsForSupervisor(supervisorId)}
           className="flex items-center gap-2 px-4 py-2 text-sm border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all"
         >
           <RefreshCw size={14} /> تحديث
@@ -369,7 +487,7 @@ const saveMakeup = async () => {
           return (
             <div
               key={group.key}
-              className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden"
+              className="bg-white rounded-2xl border border-gray-100 shadow-sm "
             >
               {/* Group Header */}
               <button
@@ -381,22 +499,27 @@ const saveMakeup = async () => {
                     <BookOpen size={20} className="text-teal-600" />
                   </div>
                   <div>
-                    <div className="font-bold text-gray-800 text-base">
+                    {/* <div className="font-bold text-gray-800 text-base">
                       {group.teacherName}
-                    </div>
+                    </div> */} 
+
+                       <div className="font-bold text-gray-800 text-base">
+                      {group.sessions[0]?.sessionNumber}
+                     </div> 
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-500">
                       <span className="flex items-center gap-1">
                         <Clock size={11} /> {group.time}
                       </span>
-                      <span className="flex items-center gap-1">
+                      {/* <span className="flex items-center gap-1">
                         <Users size={11} /> {group.sessions.length} حلقة
-                      </span>
+                      </span> */}
                     </div>
 
                    {/* ← بدل الشرط القديم بده */}
                     {!isOpen && (
                       <div className="flex flex-col gap-1 mt-2">
                         {group.sessions.slice(0, 3).map((s) => (
+                          <>
                           <span
                             key={s.id}
                             className="text-xs text-gray-500 flex items-center gap-3"
@@ -410,13 +533,21 @@ const saveMakeup = async () => {
                             )}
                             <StatusBadge status={s.attendanceStatus || "لم يُحدَّد"} />
                           </span>
-                        ))}
+
+</>
+                          
+                          
+                        )
+                        )
+                        }
 
                         {group.sessions.length > 3 && (
                           <span className="text-xs text-gray-400 mr-4">
                             +{group.sessions.length - 3} أخرى...
                           </span>
                         )}
+
+
                       </div>
                     )}
                   </div>
@@ -444,6 +575,7 @@ const saveMakeup = async () => {
                         {stats.cancelled} ملغي
                       </span>
                     )}
+
                   </div>
                   <div
                     className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${
@@ -463,7 +595,7 @@ const saveMakeup = async () => {
 
               {/* Table */}
               {isOpen && (
-                <div className="border-t border-gray-100 overflow-x-auto">
+                <div className="border-t border-gray-100 overflow-x-auto z-[0] ">
                   <table className="w-full min-w-[560px]">
                     <thead>
                       <tr className="bg-gray-50/80">
@@ -471,8 +603,8 @@ const saveMakeup = async () => {
                           "رقم الحلقة",
                           "الطالب",
                           "الهاتف",
+                          "المعلم",
                           "البلد",
-                          "وسيلة التواصل",
                           "الموعد",
                           "الحالة",
                           "حالة الحضور",
@@ -522,12 +654,13 @@ const saveMakeup = async () => {
                                 "—"
                               )}
                             </td>
+                              <td className="px-5 py-4 text-xs text-gray-500">
+                              {s.teacherName || "—"}
+                            </td>
                             <td className="px-5 py-4 text-xs text-gray-500">
                               {s.country || "—"}
                             </td>
-                            <td className="px-5 py-4 text-xs text-gray-500">
-                              {s.contactMethod || "—"}
-                            </td>
+
                             <td className="px-5 py-4">
                               <div className="flex flex-col gap-0.5">
                                 <span className="text-xs text-gray-700 font-mono">
@@ -544,11 +677,12 @@ const saveMakeup = async () => {
                               <StatusBadge status={s.status} />
                             </td>
 
-                            <td>
-                              <StatusBadge
-                                status={s.attendanceStatus || "لم يُحدَّد"}
-                              />
+                            <td className="px-5 py-4">
+                              <AttendanceStatusDropdown session={s}  />
                             </td>
+
+
+                           
 
                             <td className="px-4 py-4">
   <div className="flex items-center gap-1.5">

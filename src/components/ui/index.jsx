@@ -4,6 +4,8 @@ import { X, AlertTriangle } from 'lucide-react'
 // ← أضف ده فوق، قبل أي export function
 const STATUS_BADGE = {
   active:    'badge bg-emerald-50 text-emerald-700 border border-emerald-200',
+  absent:    'badge bg-red-50 text-red-700 border border-red-200',
+  deleted:   'badge bg-red-600 text-white border border-red-600',
   trial:     'badge bg-amber-50 text-amber-700 border border-amber-200',
   paused:    'badge bg-orange-50 text-orange-700 border border-orange-200',
   cancelled: 'badge bg-red-50 text-red-600 border border-red-200',
@@ -16,6 +18,8 @@ const STATUS_BADGE = {
 
 const STATUS_LABELS = {
   active:    'نشط',
+  absent:    'غائب',
+  deleted: "محذوف",
   trial:     'تجريبي',
   paused:    'متوقف',
   cancelled: 'ملغي',
@@ -42,7 +46,7 @@ export function Modal({ title, onClose, children, wide }) {
 }
 
 // ── Confirm Dialog ──────────────────────────────────────────────────────────
-export function ConfirmDialog({ message, onConfirm, onCancel, danger }) {
+export function ConfirmDialog({ message, onConfirm, onCancel, danger, isLoading, setIsLoading }) {
   return (
     <div className="modal-overlay">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
@@ -54,7 +58,18 @@ export function ConfirmDialog({ message, onConfirm, onCancel, danger }) {
         </div>
         <div className="flex justify-end gap-3">
           <button onClick={onCancel} className="btn-secondary">إلغاء</button>
-          <button onClick={onConfirm} className={danger ? 'btn-danger' : 'btn-success'}>تأكيد</button>
+        <button 
+          className={`${danger ? 'btn-danger' : 'btn-success'} ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`} 
+          onClick={onConfirm}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>
+              جاري التنفيذ...
+            </div>
+          ) : 'تأكيد'}
+        </button>
         </div>
       </div>
     </div>

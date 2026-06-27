@@ -32,7 +32,7 @@ export default function Settings() {
   const ic = "w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all pr-4 pl-10"
 
   return (
-    <div dir="rtl" className="max-w-lg mx-auto py-10 px-4 font-sans">
+    <div dir="rtl" className="w-full mx-auto py-10 px-4 font-sans">
 
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-800">الإعدادات</h1>
@@ -50,7 +50,7 @@ export default function Settings() {
           </div>
         </div>
 
-        <form onSubmit={handle} className="px-6 py-5 space-y-4">
+        <form onSubmit={handle} className="px-6 py-5 space-y-4 ">
 
           {/* كلمة المرور الحالية */}
           <div>
@@ -113,7 +113,7 @@ export default function Settings() {
           )}
 
           <button type="submit" disabled={!valid || loading}
-            className={`w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all ${
+            className={`px-4  py-2.5 rounded-xl text-sm font-semibold text-white transition-all ${
               valid && !loading ? 'bg-teal-600 hover:bg-teal-700 shadow-sm' : 'bg-slate-300 cursor-not-allowed'
             }`}>
             {loading

@@ -35,6 +35,16 @@ function calcTeacherTime(studentTime, countryCode) {
   } catch { return '' }
 }
 
+const weekDays = [
+  { label: 'الأحد', number: 0 },
+  { label: 'الاثنين', number: 1 },
+  { label: 'الثلاثاء', number: 2 },
+  { label: 'الأربعاء', number: 3 },
+  { label: 'الخميس', number: 4 },
+  { label: 'الجمعة', number: 5 },
+  { label: 'السبت', number: 6 },
+];
+
 function getTimezoneOffset(timezone, date) {
   const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }))
   const tzDate  = new Date(date.toLocaleString('en-US', { timeZone: timezone }))
@@ -70,7 +80,10 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
   if (field === 'time') {
     updated.teacherTime = calcTeacherTime(value, countryCode)
   }
-  dates[idx] = updated
+  if(field === 'day'){
+    updated.dayNumber = weekDays.find((w)=> w.label === value).number;
+  }
+    dates[idx] = updated
   return { ...p, regularDates: dates }
 })
 
@@ -96,15 +109,7 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
         {/* رقم الحلقة */}
         <div>
           <label className="block text-xs font-semibold text-slate-500 mb-1.5">رقم الحلقة</label>
-          {editItem ? (
-            <div className="w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-100 text-slate-500 font-mono">
-              {editItem.sessionNumber}
-            </div>
-          ) : (
-            <div className="w-full border-[1.5px] border-dashed border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-400 italic">
-              سيتم تحديده تلقائياً
-            </div>
-          )}
+          <input className={inputClass} placeholder=" رقم الحلقه..." type='text' value={form.sessionNumber} onChange={e => setForm(p => ({ ...p, sessionNumber: e.target.value }))}/>
         </div>
 
         {/* رقم الهاتف + البلد تلقائي */}
@@ -167,7 +172,7 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
         </div>
 
         {/* وسيلة التواصل */}
-        <div>
+        {/* <div>
           <label className="block text-xs font-semibold text-slate-500 mb-1.5">
             وسيلة التواصل <span className="text-red-400">*</span>
           </label>
@@ -177,7 +182,7 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
             value={form.contactMethod || ''}                              // ← contactMethod موحد
             onChange={e => setForm(p => ({ ...p, contactMethod: e.target.value }))}
           />
-        </div>
+        </div> */}
 
       </div>
 
@@ -229,63 +234,67 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
         </div>
       </div>
 
-     {/* تجريبي */}
-{/* تجريبي */}
-{form.status === 'trial' && (
-  <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 space-y-3">
-    <p className="text-xs font-semibold text-amber-700">📅 موعد الحلقة التجريبية</p>
-    <div className="rounded-xl border border-amber-100 bg-white p-3 space-y-2">
-      <div className="grid grid-cols-2 gap-3">
+        {/* تجريبي */}
+        {form.status === 'trial' && (
+          <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 space-y-3">
+            <p className="text-xs font-semibold text-amber-700">📅 موعد الحلقة التجريبية</p>
+            <div className="rounded-xl border border-amber-100 bg-white p-3 space-y-2">
+              <div className="grid grid-cols-2 gap-3">
 
-        {/* التاريخ */}
-        <div>
-          <label className="block text-xs text-slate-400 mb-1">التاريخ</label>
-          <input type="date" className={inputClass} value={form.trialDate || ''}
-            onChange={e => setForm(p => ({ ...p, trialDate: e.target.value }))} />
-        </div>
+                {/* التاريخ */}
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">التاريخ</label>
+                  <input type="date" className={inputClass} value={form.trialDate || ''}
+                    onChange={e => setForm(p => ({ ...p, trialDate: e.target.value }))} />
+                </div>
 
-        {/* وقت الطالب */}
-        <div>
-          <label className="block text-xs text-slate-400 mb-1">
-            وقت الطالب
-            {form.country && <span className="text-slate-400"> ({form.country})</span>}
-          </label>
-          <input type="time" className={inputClass} value={form.trialTime || ''}
-            onChange={e => {
-              const newTime     = e.target.value
-              const teacherTime = calcTeacherTime(newTime, countryCode)
-              setForm(p => ({ ...p, trialTime: newTime, trialTeacherTime: teacherTime }))
-            }} />
-        </div>
-      </div>
+                {/* وقت الطالب */}
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">
+                    وقت الطالب
+                    {form.country && <span className="text-slate-400"> ({form.country})</span>}
+                  </label>
+                  <input type="time" className={inputClass} value={form.trialTime || ''}
+                    onChange={e => {
+                      const newTime     = e.target.value
+                      const teacherTime = calcTeacherTime(newTime, countryCode)
+                      setForm(p => ({ ...p, trialTime: newTime, trialTeacherTime: teacherTime }))
+                    }} />
+                </div>
+              </div>
 
-      {/* وقت المعلم */}
-      <div>
-        <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1">
-          وقت المعلم (مصر) <span className="text-amber-500">⚡ تلقائي</span>
-        </label>
-        <div className={`${inputClass} bg-amber-50 border-amber-200 flex items-center justify-between`}>
-          {form.trialTeacherTime ? (
-            <>
-              <span className="text-amber-700 font-mono font-semibold">{form.trialTeacherTime}</span>
-              {form.trialTeacherTime !== form.trialTime && (
-                <span className="text-xs text-slate-400">الطالب: {form.trialTime}</span>
-              )}
-            </>
-          ) : (
-            <span className="text-slate-400 text-xs">أدخل وقت الطالب أولاً</span>
-          )}
-        </div>
-      </div>
-    </div>
-  </div>
-)}
+              {/* وقت المعلم */}
+              <div>
+                <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1">
+                  وقت المعلم (مصر) <span className="text-amber-500">⚡ تلقائي</span>
+                </label>
+                <div className={`${inputClass} bg-amber-50 border-amber-200 flex items-center justify-between`}>
+                  {form.trialTeacherTime ? (
+                    <>
+                      <span className="text-amber-700 font-mono font-semibold">{form.trialTeacherTime}</span>
+                      {form.trialTeacherTime !== form.trialTime && (
+                        <span className="text-xs text-slate-400">الطالب: {form.trialTime}</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-slate-400 text-xs">أدخل وقت الطالب أولاً</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
      
         {/* نشط — مع teacherTime تلقائي */}
       {form.status === 'active' && (
         <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 space-y-3">
           <p className="text-xs font-semibold text-emerald-700">📅 مواعيد الحلقات المنتظمة</p>
+           <div>
+            <label className="block text-xs text-slate-400 mb-1">  بدايه الانضمام </label>
+            <input type='date' className={inputClass} value={form.startDate} onChange={e => setForm((p)=> ({...p, startDate: e.target.value}))}/>
+            </div>
+ 
           {(form.regularDates || []).map((d, idx) => (
             <div key={idx} className="rounded-xl border border-emerald-100 bg-white p-3 space-y-2">
               <div className="grid grid-cols-2 gap-3">
@@ -294,8 +303,8 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
                   <select className={inputClass} value={d.day}
                     onChange={e => updateRegularDate(idx, 'day', e.target.value)}>
                     <option value="">اختر اليوم...</option>
-                    {['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'].map(day => (
-                      <option key={day} value={day}>{day}</option>
+                    {weekDays.map(day => (
+                      <option key={day.number} value={day.label}>{day.label}</option>
                     ))}
                   </select>
                 </div>
@@ -374,6 +383,14 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
             </div>
           )}
         </div>
+      )}
+
+      {form.status === 'cancelled' && (
+       <div>
+       <label className="block text-xs text-slate-500 mb-1">  بدايه تاريخ الإلغاء </label>
+       <input type="date" className={inputClass} value={form.cancelledDate || ''}
+       onChange={e => setForm(p => ({ ...p, cancelledDate: e.target.value }))} />
+       </div>
       )}
 
       {/* ملاحظات */}

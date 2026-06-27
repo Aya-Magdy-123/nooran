@@ -59,10 +59,14 @@ const Login = () => {
       localStorage.setItem("uid", userData.uid);
       localStorage.setItem("role", userData.role);
       localStorage.setItem("name", userData.name);
-
       // توجيه حسب الدور
-      if (userData.role === "admin") navigate("/admin");
-      if (userData.role === "supervisor") navigate("/supervisor");
+      
+      if (userData.role === "admin") navigate("/admin")
+       else if (userData.role === "supervisor" && userData.isDeleted === false ) navigate("/supervisor")
+        else{
+      setError("غير مصرح لك بالدخول");
+       }
+      
     } catch (err) {
       setError("بيانات غلط أو المستخدم مش موجود");
     } finally {
