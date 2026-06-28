@@ -371,7 +371,7 @@ const [postponeResolving, setPostponeResolving] = useState(null)
   const [confirm, setConfirm] = useState(null)
 
 const handleClearMakeup = async (id) => {
-  await updateMakeup(id, null)
+  await updateMakeupLocal(id, null)
   setConfirm(null)
 }
 

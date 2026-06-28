@@ -236,21 +236,28 @@ const fetchSessionsForDistribution = useCallback(async() => {
   }
 
   // تعويض — بعد تأكيد الكتابة، نحدّث محليًا بنفس القيمة اللي بعتناها (بدون قراءة إضافية)
-  const updateMakeupLocal = async (id, makeup) => {
-    await SessionsService.updateMakeup(id, makeup)
-    if (makeup?.date) {
-      await PostponeService.resolvePostponeBySessionId(id, makeup.date, makeup.studentTime)
-    }
-    setAllSessions(prev => prev.map(s => s.id === id ? { ...s, makeup: makeup ?? null } : s))
-    await fetchPostponeRequests()   // طلبات التأجيل قائمة صغيرة منفصلة، التحديث ده ضروري لتفضل متّسقة
+const updateMakeupLocal = async (id, makeup) => {
+  await SessionsService.updateMakeup(id, makeup)
+  if (makeup?.date) {
+    await PostponeService.resolvePostponeBySessionId(id, makeup.date, makeup.studentTime)
   }
+  setAllSessions(prev => prev.map(s => s.id === id ? { ...s, makeup: makeup ?? null } : s))
+  // ← أضف السطر ده
+  setSessionsForSupervisor(prev => prev.map(s => s.id === id ? { ...s, makeup: makeup ?? null } : s))
+  await fetchPostponeRequests()
+}
 
 // ─── تحديث حالة الحضور يدويًا (من لوحة المشرف) ─────────────────
 const updateAttendanceStatus = async (id, newStatus) => {
   await SessionsService.updateAttendanceStatus(id, newStatus)
-  const fresh = await SessionsService.getSessionById(id)   // قراءة واحدة بس، بدل إعادة جلب كل الحلقات
-  if (fresh) setAllSessions(prev => prev.map(s => s.id === id ? fresh : s))
-  await fetchPostponeRequests()   // ← عشان لو الحالة بقت postponed/confirmed تنعكس فورًا في قائمة طلبات التأجيل كذلك
+  const fresh = await SessionsService.getSessionById(id)
+  if (fresh) {
+    // ← حدّث allSessions
+    setAllSessions(prev => prev.map(s => s.id === id ? fresh : s))
+    // ← حدّث sessionsForSupervisor كمان
+    setSessionsForSupervisor(prev => prev.map(s => s.id === id ? fresh : s))
+  }
+  await fetchPostponeRequests()
 }
 
   // ─── Postpone  ──────────────────────────────────
