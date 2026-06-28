@@ -189,7 +189,12 @@ const fetchSessionsForDistribution = useCallback(async() => {
   }
   const deleteSupervisor  = async (id, shift) => { await SupervisorsService.deleteSupervisor(id, shift);  await fetchSupervisors() }
   const restoreSupervisor = async (id, shift) => { await SupervisorsService.restoreSupervisor(id, shift); await fetchSupervisors() }
-  const toggleAbsent      = async (id) => { await SupervisorsService.toggleAbsent(id);      await fetchSupervisors(); await fetchAllSessions() }
+  // ← بقت بتاخد absentFrom (بداية الإجازة) و absentUntil (نهايتها) بدل ما كانت تاريخ واحد بس
+  const toggleAbsent      = async (id, absentFrom = null, absentUntil = null) => {
+    await SupervisorsService.toggleAbsent(id, absentFrom, absentUntil)
+    await fetchSupervisors()
+    await fetchAllSessions()
+  }
 
   // ─── Teachers CRUD ─────────────────────────────────────────
   const addTeacher    = async (form) => { await TeachersService.addTeacher(form);         await fetchTeachers() }

@@ -65,23 +65,43 @@ export async function restoreSupervisor(id, shift) {
 
 }
 
-export async function toggleAbsent(id, absentUntil = null) {
+// ── تسجيل/إلغاء غياب المشرف ────────────────────────────────────
+// ← دعم إجازة بفترة: لو absentFrom في المستقبل، المشرف يفضل حاضر فعليًا
+//   لحد ما checkAbsentSupervisorsJob (يوميًا 4 الفجر) يفعّل الغياب تلقائيًا.
+//   absentFrom في الماضي/النهاردة (أو مش متبعتة) = غياب فوري.
+export async function toggleAbsent(id, absentFrom = null, absentUntil = null) {
   const docSnap = await getDoc(doc(db, COL, id));
   if (!docSnap.exists()) throw new Error("المشرف مش موجود");
 
   const supData = docSnap.data();
-  const newState = !supData.isActive;
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Cairo' })
 
-  await updateDoc(doc(db, COL, id), {
-    isActive: newState,
-    absentUntil: newState ? null : (absentUntil || null),
-  });
+  // لو المشرف حاضر دلوقتي وعاملينله تسجيل غياب
+  if (supData.isActive) {
+    // لو تاريخ البداية مش متبعت أو هو النهاردة/فات → غياب فوري
+    const startsToday = !absentFrom || absentFrom <= today
 
-  if (!newState) {
-    await reassignAbsentSupervisor(id, supData.shift);
-  } else {
-    await redistributeShift(supData.shift);
+    await updateDoc(doc(db, COL, id), {
+      isActive: !startsToday,         // لسه حاضر لو الإجازة لسه ما بدأتش
+      absentFrom: absentFrom || null,
+      absentUntil: absentUntil || null,
+    });
+
+    if (startsToday) {
+      await reassignAbsentSupervisor(id, supData.shift);
+    }
+    // لو الإجازة في المستقبل، الـ cron هو اللي هيفعّل الغياب وقت ما يجي absentFrom
+
+    return !startsToday
   }
 
-  return newState;
+  // لو المشرف غائب دلوقتي وعاملينله "رجوع" يدوي فوري
+  await updateDoc(doc(db, COL, id), {
+    isActive: true,
+    absentFrom: null,
+    absentUntil: null,
+  });
+  await redistributeShift(supData.shift);
+
+  return true
 }

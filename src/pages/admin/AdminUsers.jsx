@@ -10,6 +10,21 @@ import StudentSessionForm from '../../components/ui/StudentSessionForm'
 const inputClass = "w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all"
 
 // ─── Supervisors Tab ──────────────────────────────────────────────────────────
+
+// ─── Supervisors Tab ──────────────────────────────────────────────────────────
+
+// ← يوم واحد بعد تاريخ معين (YYYY-MM-DD) — نفس منطق الرجوع في checkAbsentSupervisorsJob
+// ⚠️ لازم نستخدم مكونات التاريخ المحلية (getFullYear/getMonth/getDate) لا toISOString،
+//   لأن toISOString بيحوّل لـ UTC، وده في توقيت القاهرة (UTC+2/+3) بيرجّع يوم واحد للخلف
+function nextDayStr(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00')
+  d.setDate(d.getDate() + 1)
+  const y   = d.getFullYear()
+  const m   = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 function SupervisorsTab() {
   const { supervisors, addSupervisor, updateSupervisor, deleteSupervisor, toggleAbsent, restoreSupervisor } = useApp()
 
@@ -24,7 +39,9 @@ function SupervisorsTab() {
   const [saveError,     setSaveError]     = useState('')
   const [restock,       setRestock]       = useState(null)
   const [isLoading,     setIsLoading]     = useState(false)
-  const [returnDate,    setReturnDate]    = useState('')   // ← جديد
+  const [absentFrom,    setAbsentFrom]    = useState('')   // ← بداية الإجازة
+  const [absentUntil,   setAbsentUntil]   = useState('')   // ← نهاية الإجازة
+  const [dateError,     setDateError]     = useState('')   // ← لما "إلى" قبل "من"
 
   const [form, setForm] = useState({
     name: '', email: '', phone: '', shift: 'morning', status: 'active'
@@ -82,8 +99,8 @@ function SupervisorsTab() {
     }
   }
 
-  // ── تاريخ اليوم بصيغة YYYY-MM-DD لحد أدنى لـ input date ──
-  const todayStr = new Date().toISOString().split('T')[0]
+  // ── تاريخ اليوم بصيغة YYYY-MM-DD بتوقيت القاهرة (لا UTC) لحد أدنى لـ input date ──
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Cairo' })
 
   return (
     <div className="space-y-5">
@@ -145,9 +162,13 @@ function SupervisorsTab() {
                     }`}>{s.name.charAt(0)}</div>
                     <div>
                       <span className="font-medium text-gray-800">{s.name}</span>
-                      {/* ← بيظهر تاريخ العودة تحت الاسم لو موجود */}
-                      {s.absentUntil && (
-                        <p className="text-xs text-red-400 mt-0.5">غائب حتى {s.absentUntil}</p>
+                      {/* ← بيظهر فترة الإجازة (من - إلى) تحت الاسم لو موجودة */}
+                      {(s.absentFrom || s.absentUntil) && (
+                        <p className="text-xs text-red-400 mt-0.5">
+                          {s.status === 'absent' ? 'غائب' : 'إجازة مُجدولة'}
+                          {s.absentFrom ? ` من ${s.absentFrom}` : ''}
+                          {s.absentUntil ? ` حتى ${s.absentUntil} (آخر يوم)` : ''}
+                        </p>
                       )}
                     </div>
                   </div>
@@ -265,37 +286,63 @@ function SupervisorsTab() {
           message={
             attendConfirm.supervisor.status === 'absent'
               ? `هل تريد تسجيل "${attendConfirm.supervisor.name}" حاضراً؟`
-              : `هل تريد تسجيل "${attendConfirm.supervisor.name}" غائباً؟`
+              : `هل تريد تسجيل إجازة لـ "${attendConfirm.supervisor.name}"؟`
           }
-          confirmText={attendConfirm.supervisor.status === 'absent' ? 'تسجيل حاضر' : 'تسجيل غائب'}
+          confirmText={attendConfirm.supervisor.status === 'absent' ? 'تسجيل حاضر' : 'تسجيل الإجازة'}
           danger={attendConfirm.supervisor.status !== 'absent'}
-          // ← date input بيظهر بس لما بيتسجل غائب
+          // ← اتنين date inputs (من - إلى) بيظهروا بس لما بيتسجل غياب جديد
           extraContent={attendConfirm.supervisor.status !== 'absent' ? (
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5">
-                تاريخ العودة <span className="text-slate-400 font-normal"> </span>
-              </label>
-              <input
-                type="date"
-                value={returnDate}
-                min={todayStr}
-                onChange={e => setReturnDate(e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-gray-700"
-              />
-              {returnDate && (
-                <p className="text-xs text-teal-600 mt-1.5">
-                  ✓ سيعود تلقائياً يوم {returnDate}
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">من تاريخ</label>
+                  <input
+                    type="date"
+                    value={absentFrom}
+                    min={todayStr}
+                    onChange={e => { setAbsentFrom(e.target.value); setDateError('') }}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-gray-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">إلى تاريخ</label>
+                  <input
+                    type="date"
+                    value={absentUntil}
+                    min={absentFrom || todayStr}
+                    onChange={e => { setAbsentUntil(e.target.value); setDateError('') }}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-gray-700"
+                  />
+                </div>
+              </div>
+              {dateError && (
+                <p className="text-xs text-red-500">⚠️ {dateError}</p>
+              )}
+              {absentFrom && absentUntil && !dateError && (
+                <p className="text-xs text-teal-600">
+                  {absentFrom <= todayStr
+                    ? `✓ سيُسجَّل غائباً فوراً حتى يوم ${absentUntil} (آخر يوم إجازة)، ويعود حاضراً يوم ${nextDayStr(absentUntil)}`
+                    : `✓ ستبدأ إجازته يوم ${absentFrom} وحتى ${absentUntil} (آخر يوم إجازة)، ويعود حاضراً يوم ${nextDayStr(absentUntil)}`}
                 </p>
               )}
             </div>
           ) : null}
           onConfirm={async () => {
-            await toggleAbsent(attendConfirm.supervisor.id, returnDate || null)
-            setReturnDate('')
+            // ← لو غياب جديد، اتأكد إن "إلى" بعد أو يساوي "من"
+            if (attendConfirm.supervisor.status !== 'absent' && absentFrom && absentUntil && absentUntil < absentFrom) {
+              setDateError('تاريخ النهاية لازم يكون بعد تاريخ البداية')
+              return
+            }
+            await toggleAbsent(attendConfirm.supervisor.id, absentFrom || null, absentUntil || null)
+            setAbsentFrom('')
+            setAbsentUntil('')
+            setDateError('')
             setAttendConfirm(null)
           }}
           onCancel={() => {
-            setReturnDate('')
+            setAbsentFrom('')
+            setAbsentUntil('')
+            setDateError('')
             setAttendConfirm(null)
           }}
         />

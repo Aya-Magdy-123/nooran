@@ -52,6 +52,24 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
+// ── دالة مساعدة: هل التاريخ ده واقع ضمن الفترة المختارة (من - إلى)؟ ──
+function isInDateRange(dateStr, from, to) {
+  if (!dateStr) return false
+  const d = new Date(dateStr)
+  if (isNaN(d)) return false
+  if (from) {
+    const f = new Date(from)
+    if (d < f) return false
+  }
+  if (to) {
+    const t = new Date(to)
+    t.setHours(23, 59, 59, 999) // ← يشمل آخر لحظة في يوم "إلى"
+    if (d > t) return false
+  }
+  return true
+}
+
+
 // ── دالة مساعدة: استخراج شهر-سنة (MM-YYYY) من تاريخ ──
 function toMonthYear(dateStr) {
   if (!dateStr) return null
@@ -60,10 +78,35 @@ function toMonthYear(dateStr) {
   return `${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`
 }
 
+// ── دالة مساعدة: هل التاريخ ده (YYYY-MM-DD) في المستقبل بالنسبة للنهاردة؟ ──
+function isFutureDateStr(dateStr) {
+  if (!dateStr) return false
+  return dateStr > todayStr()
+}
+
+// ── دالة مساعدة: هل الشهر/السنة (MM-YYYY) ده في المستقبل بالنسبة للشهر الحالي؟ ──
+function isFutureMonthYear(monthYearStr) {
+  if (!monthYearStr) return false
+  const [mm, yyyy] = monthYearStr.split('-').map(Number)
+  const now  = new Date()
+  const curY = now.getFullYear()
+  const curM = now.getMonth() + 1
+  if (yyyy > curY) return true
+  if (yyyy === curY && mm > curM) return true
+  return false
+}
+
+// ── دالة مساعدة: اسم يوم الأسبوع (بالعربي) لتاريخ معيّن، بدون مشاكل التايم زون ──
+function getDayNameFromDateStr(dateStr) {
+  if (!dateStr) return null
+  const [y, m, d] = dateStr.split('-').map(Number)
+  if (!y || !m || !d) return null
+  return DAYS_AR[new Date(y, m - 1, d).getDay()]
+}
 
 // ── هل الحلقة فيها اليوم المختار؟ ──
 function matchesDay(s, day) {
-  if (day === 'all') return true
+  if (day === 'all' || !day) return true
   return (s.regularDates || []).some(d => d.day === day)
 }
 
@@ -235,7 +278,13 @@ const {
   const [filterTeacher,    setFilterTeacher]    = useState('all')
   const [filterSupervisor, setFilterSupervisor] = useState('all')
   const [filterDay,        setFilterDay]        = useState('all')
+  // ← نوع فلتر التاريخ: بدون / فترة (من-إلى) / يوم محدد / شهر محدد
+  const [dateFilterMode,   setDateFilterMode]   = useState('none')
+  const [filterDateFrom,   setFilterDateFrom]   = useState('')
+  const [filterDateTo,     setFilterDateTo]     = useState('')
+  const [filterSingleDate, setFilterSingleDate] = useState('')
   const [filterMonthYear,  setFilterMonthYear]  = useState('')
+  const [filterSessionNumber, setFilterSessionNumber] = useState('')
   const [flaggedOnly,      setFlaggedOnly]      = useState(false)
 
   const [modalOpen, setModalOpen] = useState(false)
@@ -255,8 +304,78 @@ const [postponeResolving, setPostponeResolving] = useState(null)
   // ← صفحة العرض الحالية (client-side pagination)
   const [page, setPage] = useState(1)
 
-const sessionsMatchesMonthYear= useMemo(() => {
+const sessionsMatchesDateRange = useMemo(() => {
+  if (!filterDateFrom && !filterDateTo) return liveSessions;
+
+  // ← هل الفترة المختارة بالكامل في المستقبل؟ (بنحكم بالتاريخ المعرّف منهم: من، وإلا إلى)
+  const anchorDate   = filterDateFrom || filterDateTo
+  const rangeIsFuture = isFutureDateStr(anchorDate)
+  const isSingleDay   = !!filterDateFrom && !!filterDateTo && filterDateFrom === filterDateTo
+
+  if (rangeIsFuture) {
+    if (isSingleDay) {
+      // ← يوم واحد مستقبلي ضمن الفترة: نطابق على يوم الأسبوع بتاعه + نشط فقط
+      const dayName = getDayNameFromDateStr(filterDateFrom)
+      return liveSessions.filter(s => s.status === 'active' && matchesDay(s, dayName))
+    }
+    // ← فترة أطول من يوم في المستقبل: نعرض النشطين فقط (بدون تقييد بيوم أسبوع معيّن)
+    return liveSessions.filter(s => s.status === 'active')
+  }
+
+  return liveSessions
+    .map((s) => {
+      const matchedEntries = (s.history || []).filter(
+        (d) => isInDateRange(d.date, filterDateFrom, filterDateTo)
+      );
+      if (matchedEntries.length === 0) return null;
+
+      // ← آخر حالة وصلت ضمن الفترة المختارة (أحدث تاريخ بين النتائج المطابقة)
+      const latestEntry = matchedEntries.reduce(
+        (a, b) => (new Date(a.date) > new Date(b.date) ? a : b)
+      );
+
+      return {
+        ...s,
+        status: latestEntry.status, // ← الحالة خلال الفترة المختارة
+      };
+    }).filter(Boolean);
+},[liveSessions, filterDateFrom, filterDateTo]);
+
+// ← فلتر يوم محدد بالتاريخ الكامل (مش يوم أسبوع)
+const sessionsMatchesSingleDate = useMemo(() => {
+  if (!filterSingleDate) return liveSessions;
+
+  if (isFutureDateStr(filterSingleDate)) {
+    // ← تاريخ مستقبلي: نطابق على يوم الأسبوع بتاعه + نشط فقط
+    const dayName = getDayNameFromDateStr(filterSingleDate)
+    return liveSessions.filter(s => s.status === 'active' && matchesDay(s, dayName))
+  }
+
+  // ← تاريخ في الماضي (أو النهاردة): نفس منطق البحث في الـ history
+  return liveSessions
+    .map((s) => {
+      const matchedEntries = (s.history || []).filter(
+        (d) => isInDateRange(d.date, filterSingleDate, filterSingleDate)
+      );
+      if (matchedEntries.length === 0) return null;
+
+      const latestEntry = matchedEntries.reduce(
+        (a, b) => (new Date(a.date) > new Date(b.date) ? a : b)
+      );
+
+      return { ...s, status: latestEntry.status };
+    }).filter(Boolean);
+}, [liveSessions, filterSingleDate]);
+
+// ← فلتر الشهر/السنة (رجّعناه زي ما كان في الكود الأصلي)
+const sessionsMatchesMonthYear = useMemo(() => {
   if (!filterMonthYear) return liveSessions;
+
+  if (isFutureMonthYear(filterMonthYear)) {
+    // ← شهر مستقبلي بالكامل: نعرض النشطين فقط
+    return liveSessions.filter(s => s.status === 'active')
+  }
+
   return liveSessions
     .map((s) => {
       const matchedEntry = s.history?.find(
@@ -273,8 +392,15 @@ const sessionsMatchesMonthYear= useMemo(() => {
 
   // ── Filters ── (كلها client-side على liveSessions / allSessions) ──
   const filtered = useMemo(() => {
-    const result = (filterMonthYear ? sessionsMatchesMonthYear : liveSessions).filter(s => (
+    const dateBase =
+      dateFilterMode === 'range' ? sessionsMatchesDateRange :
+      dateFilterMode === 'day'   ? sessionsMatchesSingleDate :
+      dateFilterMode === 'month' ? sessionsMatchesMonthYear :
+      liveSessions
+
+    const result = dateBase.filter(s => (
       (!search || s.studentName.toLowerCase()?.includes(search.toLowerCase()) || String(s.sessionNumber.toLowerCase())?.includes(search.toLowerCase())) &&
+      (!filterSessionNumber || String(s.sessionNumber).toLowerCase().includes(filterSessionNumber.trim().toLowerCase())) &&
       (filterStatus.includes('all') || filterStatus.includes(s.status)) &&
       (filterTeacher    === 'all' || s.teacherId    === filterTeacher) &&
       (filterSupervisor === 'all' || s.supervisorId === filterSupervisor) &&
@@ -291,10 +417,18 @@ const sessionsMatchesMonthYear= useMemo(() => {
     }
 
     return result
-  }, [liveSessions, search, filterStatus, filterTeacher, filterSupervisor, filterDay, filterMonthYear, flaggedOnly])
+  }, [
+    liveSessions, dateFilterMode,
+    sessionsMatchesDateRange, sessionsMatchesSingleDate, sessionsMatchesMonthYear,
+    search, filterStatus, filterTeacher, filterSupervisor, filterDay, filterSessionNumber, flaggedOnly
+  ])
 
   // ← كل ما الفلاتر أو البحث يتغيروا، رجّع لأول صفحة
-  useEffect(() => { setPage(1) }, [search, filterStatus, filterTeacher, filterSupervisor, filterDay, filterMonthYear, flaggedOnly])
+  useEffect(() => { setPage(1) }, [
+    search, filterStatus, filterTeacher, filterSupervisor, filterDay,
+    dateFilterMode, filterDateFrom, filterDateTo, filterSingleDate, filterMonthYear,
+    filterSessionNumber, flaggedOnly
+  ])
 
   const totalFiltered = filtered.length
   const totalPages    = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE))
@@ -396,11 +530,22 @@ const saveMakeup = async () => {
     form.status === 'active' ? form.regularDates?.some(d => d.day && d.time) : true
   ))
 
-  const hasActiveFilters = !filterStatus.includes('all') || filterTeacher !== 'all' || filterSupervisor !== 'all' || filterDay !== 'all' || !!filterMonthYear
+  const hasActiveFilters = !filterStatus.includes('all') || filterTeacher !== 'all' || filterSupervisor !== 'all' || filterDay !== 'all' || dateFilterMode !== 'none' || !!filterSessionNumber
   const clearFilters = () => {
     setFilterStatus(['all']); setFilterTeacher('all'); setFilterSupervisor('all')
-    setFilterDay('all'); setFilterMonthYear('')
+    setFilterDay('all'); setFilterSessionNumber('')
+    setDateFilterMode('none'); setFilterDateFrom(''); setFilterDateTo(''); setFilterSingleDate(''); setFilterMonthYear('')
   }
+
+  // ← هل في فلتر تاريخ (فترة/يوم/شهر) شغّال دلوقتي؟ (مستخدم لإخفاء عمود المشرف زي الأصل)
+  const isDateFilterActive = dateFilterMode !== 'none'
+
+  // ← هل الفلتر المختار (أي ما كان نوعه) بيشاور على فترة/يوم/شهر في المستقبل؟ (لعرض تنبيه بسيط في الواجهة)
+  const dateFilterIsFuture =
+    dateFilterMode === 'day'   ? isFutureDateStr(filterSingleDate) :
+    dateFilterMode === 'month' ? isFutureMonthYear(filterMonthYear) :
+    dateFilterMode === 'range' ? isFutureDateStr(filterDateFrom || filterDateTo) :
+    false
 
   if (allSessionsLoading && allSessions.length === 0) return (
     <div className="flex items-center justify-center py-20 text-gray-400">
@@ -428,7 +573,7 @@ const saveMakeup = async () => {
 
       {/* Search + Add */}
      
-<div className="flex items-center gap-3">
+<div className="flex flex-col md:flex-row md:items-center gap-3">
   <div className="relative flex-1">
     <svg className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
@@ -490,18 +635,78 @@ const saveMakeup = async () => {
             ...DAYS_AR.map(d => ({ value:d, label:d }))
           ]}/>
 
-          {/* فلتر الشهر/السنة — input month، بيتقارن مع cancelledDate / trialDate / startDate حسب حالة كل حلقة */}
+          {/* فلتر رقم الحلقة */}
           <input
-            type="month"
-            value={filterMonthYear ? `${filterMonthYear.split('-')[1]}-${filterMonthYear.split('-')[0]}` : ''}
-            onChange={e => {
-              const val = e.target.value // "YYYY-MM"
-              if (!val) { setFilterMonthYear(''); return }
-              const [year, month] = val.split('-')
-              setFilterMonthYear(`${month}-${year}`)
-            }}
-            className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-all"
+            type="text"
+            value={filterSessionNumber}
+            onChange={e => setFilterSessionNumber(e.target.value)}
+            placeholder="رقم الحلقة"
+            className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm hover:border-slate-300 transition-all w-28"
           />
+
+          {/* فاصل بسيط قبل فلاتر التاريخ */}
+          <div className="w-px h-6 bg-slate-200"/>
+
+          {/* نوع فلتر التاريخ: بدون / فترة / يوم محدد / شهر محدد */}
+          <FilterSelect value={dateFilterMode} onChange={(v) => setDateFilterMode(v)} options={[
+            { value:'none',  label:'بدون فلتر تاريخ' },
+            { value:'range', label:'فترة (من - إلى)' },
+            { value:'day',   label:'يوم محدد' },
+            { value:'month', label:'شهر محدد' },
+          ]}/>
+
+          {/* فلتر الفترة (من - إلى) — بيتقارن مع تاريخ حالة كل حلقة ضمن history، ولو الفترة مستقبلية بيعرض النشطين فقط */}
+          {dateFilterMode === 'range' && (
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={e => setFilterDateFrom(e.target.value)}
+                max={filterDateTo || undefined}
+                className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-all"
+              />
+              <span className="text-xs text-slate-400">إلى</span>
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={e => setFilterDateTo(e.target.value)}
+                min={filterDateFrom || undefined}
+                className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-all"
+              />
+            </div>
+          )}
+
+          {/* فلتر يوم محدد بتاريخه الكامل — لو مستقبلي بيطابق على يوم الأسبوع بتاعه ويعرض النشطين بس */}
+          {dateFilterMode === 'day' && (
+            <input
+              type="date"
+              value={filterSingleDate}
+              onChange={e => setFilterSingleDate(e.target.value)}
+              className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-all"
+            />
+          )}
+
+          {/* فلتر الشهر/السنة — لو مستقبلي بيعرض النشطين فقط بدون تقييد بيوم أسبوع */}
+          {dateFilterMode === 'month' && (
+            <input
+              type="month"
+              value={filterMonthYear ? `${filterMonthYear.split('-')[1]}-${filterMonthYear.split('-')[0]}` : ''}
+              onChange={e => {
+                const val = e.target.value // "YYYY-MM"
+                if (!val) { setFilterMonthYear(''); return }
+                const [year, month] = val.split('-')
+                setFilterMonthYear(`${month}-${year}`)
+              }}
+              className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-all"
+            />
+          )}
+
+          {/* تنبيه بسيط لما الفلتر المختار يكون لفترة/يوم/شهر مستقبلي */}
+          {dateFilterIsFuture && (
+            <span className="flex items-center gap-1 text-[11px] text-indigo-600 bg-indigo-50 border border-indigo-100 px-2.5 py-1.5 rounded-lg font-medium whitespace-nowrap">
+              📌 فترة مستقبلية — يعرض النشطين فقط
+            </span>
+          )}
 
           <button onClick={() => setFlaggedOnly(p => !p)}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${
@@ -610,7 +815,7 @@ const saveMakeup = async () => {
           <table className="w-full">
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-100">
-                {['رقم الحلقة','الموعد','الطالب','البلد','المعلم', !filterMonthYear && 'المشرف','الحالة','التعويض','إجراء'].map(h => (
+                {['رقم الحلقة','الموعد','الطالب','البلد','المعلم', !isDateFilterActive && 'المشرف','الحالة','التعويض','إجراء'].map(h => (
                   <th key={h} className="px-4 py-3.5 text-right text-xs font-semibold text-slate-500 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -672,7 +877,7 @@ const saveMakeup = async () => {
                     {/* المشرف */}
                     
                     <td className="px-4 py-3.5">
-                      {!filterMonthYear &&(
+                      {!isDateFilterActive &&(
                       s.supervisorName ? (
                         <div className="flex items-center gap-1.5">
                           <div className="w-6 h-6 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
