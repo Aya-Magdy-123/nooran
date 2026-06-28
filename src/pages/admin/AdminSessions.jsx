@@ -331,6 +331,7 @@ const sessionsMatchesMonthYear= useMemo(() => {
       flagged:        s.flagged        || false,
       startDate:      s.startDate      || '',
       cancelledDate:  s.cancelledDate  || '',
+      trialTeacherTime: s.trialTeacherTime || ''
     })
     setModalOpen(true)
   }

@@ -204,7 +204,7 @@ export default function AdminOverview() {
         {/* Row 1 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {/* توزيع الحلقات */}
-          <div className="bg-white rounded-2xl overflow-y-auto border border-gray-100 p-5">
+            <div className="bg-white rounded-2xl border border-gray-100 p-5 h-[300px] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-gray-500">
                 توزيع الحلقات — اليوم
