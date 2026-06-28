@@ -336,8 +336,8 @@ export default function SupervisorHalaqas({ teachers, programs }) {
     sessionsForSupervisorError: error,
     fetchSessionsForSupervisor,
     sessionsForSupervisor,
-    updateMakeup,
-    resolvePostpone,  // لو محتاج زر تحديث يدوي
+updateMakeupLocal,
+ resolvePostpone  // لو محتاج زر تحديث يدوي
   } = useApp();
 
   const supervisorId = localStorage.getItem("uid");
@@ -415,13 +415,12 @@ const handleClearMakeup = async (id) => {
 
 const saveMakeup = async () => {
   console.log('Saving makeup for session ID:', makeupSession.id)   // ← أضف ده مؤقتاً
-  await updateMakeup(makeupSession.id, { ...makeupForm, confirmed: true })
-
-  if (postponeResolving) {
-    console.log('Resolving postpone for:', postponeResolving)   // ← وده
-    await resolvePostpone(postponeResolving, makeupForm.date, makeupForm.studentTime)
-    setPostponeResolving(null)
-  }
+  await updateMakeupLocal(makeupSession.id, { ...makeupForm, confirmed: true })
+  // if (postponeResolving) {
+  //   console.log('Resolving postpone for:', postponeResolving)   // ← وده
+  //   await resolvePostpone(postponeResolving, makeupForm.date, makeupForm.studentTime)
+  //   setPostponeResolving(null)
+  // }
 
   setMakeupModal(false)
 }
