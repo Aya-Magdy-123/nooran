@@ -65,19 +65,22 @@ export async function restoreSupervisor(id, shift) {
 
 }
 
-export async function toggleAbsent(id) {
+export async function toggleAbsent(id, absentUntil = null) {
   const docSnap = await getDoc(doc(db, COL, id));
   if (!docSnap.exists()) throw new Error("المشرف مش موجود");
 
   const supData = docSnap.data();
   const newState = !supData.isActive;
 
-  await updateDoc(doc(db, COL, id), { isActive: newState });
+  await updateDoc(doc(db, COL, id), {
+    isActive: newState,
+    absentUntil: newState ? null : (absentUntil || null),
+  });
 
   if (!newState) {
-    await reassignAbsentSupervisor(id, supData.shift); // ← من distributionService
+    await reassignAbsentSupervisor(id, supData.shift);
   } else {
-    await redistributeShift(supData.shift); // ← من distributionService
+    await redistributeShift(supData.shift);
   }
 
   return newState;
