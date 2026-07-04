@@ -670,6 +670,15 @@ function StudentBadge({ status }) {
   )
 }
 
+// ← جديد: اسم يوم الأسبوع (بالعربي) لتاريخ معيّن، مطلوبة لعمود المواعيد (موعد التجريبي)
+function getDayNameFromDateStr(dateStr) {
+  if (!dateStr) return null
+  const DAYS_AR = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']
+  const [y, m, d] = dateStr.split('-').map(Number)
+  if (!y || !m || !d) return null
+  return DAYS_AR[new Date(y, m - 1, d).getDay()]
+}
+
 const EMPTY_FORM = {
   name: '', phone: '', country: '', teacherId: '',
   program: '', status: 'trial', contactMethod: '',
@@ -732,6 +741,17 @@ export function getStatusAtMonth(session, monthYearStr) {
   }
 
   // ═══ الشهر مستقبلي بالكامل: قواعد خاصة حسب الحالة الحالية ═══
+
+  // ← جديد: افحص التحولات المؤجلة الأول (إلغاء/تفعيل مجدول من الأدمن
+  //   بتاريخ مستقبلي)، قبل أي منطق تاني، لأنها بتتغلّب على الحالة الحيّة
+  //   الحالية بمجرد ما تاريخها يوصل خلال الشهر المفلتر
+  if (session.pendingCancelDate && session.pendingCancelDate <= monthEndStr) {
+    return 'cancelled'
+  }
+  if (session.pendingActivateDate && session.pendingActivateDate <= monthEndStr) {
+    return 'active'
+  }
+
   const current = session.status
 
   if (current === 'cancelled') return 'cancelled'
@@ -756,21 +776,44 @@ export function getStatusAtMonth(session, monthYearStr) {
 
 // ← كل "الفترات" (segments) اللي حالة الحلقة مرّت بيها، متقاطعة مع مدى معيّن
 // كل عنصر: { status, from, to } — to === null يعني الفترة لسه مستمرة (الحالة الحالية)
+// ← كل "الفترات" (segments) اللي حالة الحلقة مرّت بيها، متقاطعة مع مدى معيّن
+// كل عنصر: { status, from, to } — to === null يعني الفترة لسه مستمرة (الحالة الحالية)
 function getStatusSegments(session, rangeStart, rangeEnd) {
   const hist = (session.history || [])
     .filter(h => h.date && h.status)
     .slice()
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
 
+  let raw
   if (!hist.length) {
     // ← مفيش history: افترض إن الحالة الحالية سارية طول المدى المطلوب
-    return [{ status: session.status, from: rangeStart || null, to: rangeEnd || null }]
+    raw = [{ status: session.status, from: rangeStart || null, to: null }]
+  } else {
+    raw = hist.map((cur, i) => {
+      const next = hist[i + 1]
+      return { status: cur.status, from: cur.date, to: next ? prevDayStr(next.date) : null }
+    })
   }
 
-  const raw = hist.map((cur, i) => {
-    const next = hist[i + 1]
-    return { status: cur.status, from: cur.date, to: next ? prevDayStr(next.date) : null }
-  })
+  // ← جديد: لو فيه تحويل مؤجل (تفعيل/إلغاء مجدول من الأدمن بتاريخ مستقبلي
+  //   لسه ما اتنفّذش فعليًا)، قسّم آخر segment المفتوحة عنده، عشان تظهر
+  //   الحالتين منفصلتين (مثلاً: تجريبي لحد يوم كذا، ثم نشط من يوم كذا)
+  const pendingDate   = session.pendingCancelDate || session.pendingActivateDate || null
+  const pendingStatus = session.pendingCancelDate ? 'cancelled' : (session.pendingActivateDate ? 'active' : null)
+
+  if (pendingDate && pendingStatus) {
+    const lastIdx = raw.length - 1
+    const last = raw[lastIdx]
+    if (last && last.to === null && last.status !== pendingStatus) {
+      const dayBefore = prevDayStr(pendingDate)
+      const shouldCloseLast = !last.from || dayBefore >= last.from
+      raw = [
+        ...raw.slice(0, lastIdx),
+        ...(shouldCloseLast ? [{ status: last.status, from: last.from, to: dayBefore }] : []),
+        { status: pendingStatus, from: pendingDate, to: null },
+      ]
+    }
+  }
 
   return raw
     .filter(seg => (!rangeEnd || seg.from <= rangeEnd) && (!rangeStart || seg.to === null || seg.to >= rangeStart))
@@ -1034,7 +1077,7 @@ const hasActiveFilters = !filterStatus.includes('all') || !filterProgram.include
         {/* نوع فلتر التاريخ */}
         <select value={dateFilterMode} onChange={e => setDateFilterMode(e.target.value)}
           className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm">
-          <option value="none">الحالة الحيّة</option>
+          <option value="none">الحالة الحالية</option>
           <option value="month">شهر محدد</option>
           <option value="range">فترة (من - إلى)</option>
         </select>
@@ -1064,7 +1107,7 @@ const hasActiveFilters = !filterStatus.includes('all') || !filterProgram.include
             ✕ مسح الفلاتر
           </button>
         )}
-        <span className="mr-auto text-xs text-slate-400 font-medium">{totalFiltered} حلقة</span>
+        <span className="mr-auto text-xs text-slate-400 font-medium">{totalFiltered} طلاب </span>
       </div>
 
       {/* الجدول */}
@@ -1072,14 +1115,14 @@ const hasActiveFilters = !filterStatus.includes('all') || !filterProgram.include
         <table className="w-full">
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-100">
-              {['رقم الحلقة','الاسم','الهاتف','البلد','المعلم','البرنامج','الحالة','إجراء'].map(h => (
+              {['رقم الحلقة','الاسم','الهاتف','البلد','المعلم','البرنامج','المواعيد','الحالة','إجراء'].map(h => (
                 <th key={h} className="px-5 py-4 text-right text-sm font-semibold text-gray-500">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
             {paginated.length === 0 && (
-              <tr><td colSpan={8} className="px-5 py-16 text-center">
+              <tr><td colSpan={9} className="px-5 py-16 text-center">
                 <div className="flex flex-col items-center gap-2 text-slate-400">
                   <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-2xl">🔍</div>
                   <span className="text-sm">لا توجد حلقات مطابقة</span>
@@ -1110,6 +1153,36 @@ const hasActiveFilters = !filterStatus.includes('all') || !filterProgram.include
                 <td className="px-5 py-4 text-sm text-gray-500">{s.country || '—'}</td>
                 <td className="px-5 py-4 text-sm text-gray-600">{s.teacherName?.replace('الشيخ ', '') || '—'}</td>
                 <td className="px-5 py-4 text-sm text-gray-600">{s.program || '—'}</td>
+
+                {/* ← عمود المواعيد الجديد */}
+                <td className="px-5 py-4">
+                  {s.status === 'trial' && s.trialDate ? (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs font-semibold text-amber-700">{getDayNameFromDateStr(s.trialDate)}</span>
+                      <span className="text-xs text-slate-500 font-mono">
+                        {s.trialTime}
+                        {s.trialTeacherTime && s.trialTeacherTime !== s.trialTime &&
+                          <span className="text-slate-400"> (مصر: {s.trialTeacherTime})</span>}
+                      </span>
+                    </div>
+                  ) : (s.regularDates && s.regularDates.length > 0) ? (
+                    <div className="flex flex-col gap-1">
+                      {s.regularDates.map((d, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <span className="text-xs font-semibold text-teal-700 whitespace-nowrap">{d.day}</span>
+                          <span className="text-xs text-slate-500 font-mono">
+                            {d.time}
+                            {d.teacherTime && d.teacherTime !== d.time &&
+                              <span className="text-slate-400"> (مصر: {d.teacherTime})</span>}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-slate-300 text-sm">—</span>
+                  )}
+                </td>
+
                 <td className="px-5 py-4">
                   {/* ← وضع الفترة: اعرض كل الفترات (segments) اللي الحلقة مرّت بيها */}
                   {dateFilterMode === 'range' && s._segments ? (
@@ -1221,7 +1294,6 @@ const hasActiveFilters = !filterStatus.includes('all') || !filterProgram.include
     </div>
   )
 }
-
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function AdminUsers() {
   const TABS = [

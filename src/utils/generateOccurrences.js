@@ -281,7 +281,7 @@ function buildOccurrence(session, date, stored, occurrenceNumber = null) {
     teacherName: stored?.teacherName || session.teacherName,
     supervisorId:   shouldFreeze ? stored.supervisorId   : liveSupervisorId,
     supervisorName: shouldFreeze ? stored.supervisorName : liveSupervisorName,
-    flagged: session.flagged,
+    flagged: stored?.flagged || false,
     date,
     time: matchingRegular?.time || (date === session.trialDate ? session.trialTime : session.regularDates?.[0]?.time),
     status: stored?.status || defaultOccurrenceStatus(),

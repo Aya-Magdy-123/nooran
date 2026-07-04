@@ -331,8 +331,8 @@ const phase1Sessions = useMemo(() => {
     (filterTeacher.includes('all') || filterTeacher.includes(s.teacherId)) &&
     // ← فلتر المشرف اتشال من هنا خالص، هيتطبّق بعدين على مستوى الحصة نفسها
     (!filterStudentId || s.id === filterStudentId) &&
-    matchesDay(s, filterDay) &&
-    (!flaggedOnly || s.flagged)
+    matchesDay(s, filterDay)
+    
   ))
 
   if (!filterDay.includes('all')) {
@@ -392,11 +392,12 @@ const generatedOccurrences = useMemo(() => {
     .filter(o => filterDay.includes('all') || filterDay.includes(getDayNameFromDateStr(o.date)))
     // ← جديد: فلتر المشرف بقى على مستوى الحصة نفسها (المشرف الظاهر فعليًا في عمودها)
     .filter(o => filterSupervisor.includes('all') || filterSupervisor.includes(o.supervisorId))
+     .filter(o => !flaggedOnly || o.flagged)
     .sort((a, b) => {
       if (a.date !== b.date) return a.date < b.date ? -1 : 1
       return (a.time || '').localeCompare(b.time || '')
     })
-}, [occurrenceSourceSessions, occurrences, occurrenceRangeOptions, filterOccStatus, filterDay, filterSupervisor, dateFilterMode, futureRangeEnd])
+}, [occurrenceSourceSessions, occurrences, occurrenceRangeOptions, filterOccStatus, filterDay, filterSupervisor, dateFilterMode, futureRangeEnd,flaggedOnly])
 const activeList = generatedOccurrences;
 
 useEffect(() => {
@@ -496,6 +497,9 @@ const handleOccurrenceStatusChange = async (occ, newStatus) => {
     await upsertOccurrenceLocal(occ.sessionId, occ.date, { status: 'makeup', makeupDate: newMakeupDate })
   }
 
+  const handleOccurrenceFlagToggle = async (occ) => {
+  await upsertOccurrenceLocal(occ.sessionId, occ.date, { flagged: !occ.flagged })
+}
   // ── CRUD ──
   const openAdd = () => { setEditItem(null); setForm(EMPTY_FORM); setModalOpen(true) }
 
@@ -653,7 +657,7 @@ const clearFilters = () => {
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">إدارة الحلقات</h1>
-          <p className="text-sm text-slate-500 mt-0.5">عرض وتتبع جميع الحصص — من النهارده وطالع افتراضيًا</p>
+          <p className="text-sm text-slate-500 mt-0.5">عرض وتتبع جميع الحصص — من النهارده الي الابد افتراضيًا</p>
         </div>
         <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm shadow-sm">
           <Calendar size={15} className="text-teal-500"/>
@@ -748,7 +752,7 @@ const clearFilters = () => {
           {/* نوع فلتر التاريخ على مستوى الحصص (occurrences) — شغّال دايمًا، مع أو بدون فلتر طالب.
               'بدون فلتر تاريخ' هنا معناها: من النهارده وطالع (الوضع الافتراضي) */}
            <FilterSelect value={dateFilterMode} onChange={(v) => setDateFilterMode(v)} options={[
-          { value:'none',  label:'من النهارده وطالع' },
+          { value:'none',  label:'من النهارده الي الابد' },
           { value:'all',   label:'كل السجل (كل التواريخ)' },
           { value:'range', label:'فترة (من - إلى)' },
           { value:'day',   label:'يوم محدد' },
@@ -993,9 +997,9 @@ const clearFilters = () => {
                     <div className="flex items-center gap-1.5">
                       {parentSession && (
                         <>
-                          <button onClick={() => handleToggleFlag(parentSession.id)}
+                           <button onClick={() => handleOccurrenceFlagToggle(o)}
                             className={`p-1.5 rounded-lg transition-all ${parentSession.flagged ? 'text-amber-500 bg-amber-50' : 'text-slate-300 hover:text-amber-400 hover:bg-amber-50'}`}>
-                            <Star size={14} className={parentSession.flagged ? 'fill-amber-400' : ''}/>
+                            <Star size={14} className={o.flagged ? 'fill-amber-400' : ''}/>
                           </button>
                           <button onClick={() => openEdit(parentSession)}
                             className="p-1.5 text-slate-300 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-all">

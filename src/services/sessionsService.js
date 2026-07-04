@@ -167,7 +167,10 @@ export async function updateSession(id, form, teacherName) {
   //   ما يجي يوم cancelledDate، وهتتلغى تلقائيًا وقتها عن طريق
   //   checkAndCancelPendingSessions (بتتنفّذ كل ما نجيب الحلقات)
   const isFutureCancellation = form.status === "cancelled" && form.cancelledDate && form.cancelledDate > todayStr;
-  const liveStatus = isFutureCancellation ? oldStatus : form.status;
+  // ← جديد: تفعيل مؤجل (لسه مش active وتاريخ البداية في المستقبل)
+  const isFutureActivation = form.status === "active" && form.startDate && form.startDate > todayStr && oldStatus !== "active";
+
+  const liveStatus = isFutureCancellation ? oldStatus : (isFutureActivation ? oldStatus : form.status);
 
   await updateDoc(sessionRef, {
     studentName: form.name || "",
@@ -191,6 +194,8 @@ export async function updateSession(id, form, teacherName) {
     startDate: form.startDate || "",
     // ← جديد: "تذكرة" إلغاء مؤجل يقرأها checkAndCancelPendingSessions لاحقًا
     pendingCancelDate: isFutureCancellation ? form.cancelledDate : null,
+    pendingActivateDate: isFutureActivation ? form.startDate : null,  // ← جديد
+
   });
 
   const historyDate =
