@@ -3,14 +3,17 @@ import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../../../firebase";
 import { useNavigate } from "react-router-dom";
 import logo from "../../assets/logo.png";
-import { login } from "../../services/authService";
-
+import { login, forgotPassword } from "../../services/authService";
 const Login = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+
+  const [resetEmail, setResetEmail] = useState("");
+  const [showReset, setShowReset] = useState(false);
+  const [message, setMessage] = useState("");
 
   // const handleLogin = async (e) => {
   //   e.preventDefault();
@@ -73,6 +76,31 @@ const Login = () => {
       setLoading(false);
     }
   };
+  const handleResetPassword = async () => {
+  try {
+    await forgotPassword(resetEmail);
+
+    setMessage(
+      "تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني"
+    );
+
+    setShowReset(false);
+
+  } catch (error) {
+
+    if (error.code === "auth/user-not-found") {
+      setError("لا يوجد مستخدم بهذا البريد");
+    }
+
+    else if (error.code === "auth/invalid-email") {
+      setError("البريد الإلكتروني غير صالح");
+    }
+
+    else {
+      setError("حدث خطأ أثناء إرسال الرسالة");
+    }
+  }
+};
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -83,6 +111,11 @@ const Login = () => {
         {error && (
           <div className="bg-red-100 text-red-600 p-3 rounded mb-4 text-center">
             {error}
+          </div>
+        )}
+        {message && (
+          <div className="bg-green-100 text-green-700 p-3 rounded mb-4 text-center">
+            {message}
           </div>
         )}
 
@@ -110,6 +143,15 @@ const Login = () => {
               required
             />
           </div>
+          <div className="text-left">
+          <button
+            type="button"
+            onClick={() => setShowReset(true)}
+            className="text-sm text-green-600 hover:underline"
+          >
+            نسيت كلمة المرور؟
+          </button>
+        </div>
 
           <button
             type="submit"
@@ -119,6 +161,41 @@ const Login = () => {
             {loading ? "جاري الدخول..." : "دخول"}
           </button>
         </form>
+        {showReset && (
+  <div className="mt-4 border rounded-lg p-4 bg-gray-50">
+
+    <p className="mb-2 text-sm">
+      أدخل البريد الإلكتروني لإرسال رابط إعادة تعيين كلمة المرور
+    </p>
+
+    <input
+      type="email"
+      value={resetEmail}
+      onChange={(e) => setResetEmail(e.target.value)}
+      className="w-full border rounded-lg p-2"
+      placeholder="example@gmail.com"
+    />
+
+    <div className="flex gap-2 mt-3">
+
+      <button
+        onClick={handleResetPassword}
+        className="bg-green-600 text-white px-4 py-2 rounded"
+      >
+        إرسال
+      </button>
+
+      <button
+        onClick={() => setShowReset(false)}
+        className="border px-4 py-2 rounded"
+      >
+        إلغاء
+      </button>
+
+    </div>
+
+  </div>
+)}
       </div>
     </div>
   );

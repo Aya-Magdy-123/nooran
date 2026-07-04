@@ -13,6 +13,9 @@ import { db } from "../../firebase";
 
 import {
   getSessionShift,
+  getShiftForTime,
+  pickSupervisorForShift,
+  assignSupervisorsToRegularDates,
   reassignSessionOnStatusChange,
 } from "./distributionService";
 
@@ -61,71 +64,57 @@ export async function getSessionsPerDay() {
 }
 
 // ── جيب حلقات مشرف معين ──────────────────────────────────────
+// ── جيب حلقات مشرف معين، بس اللي حصتها فعليًا "النهاردة" ──────
+// trial → حصة واحدة بس، تظهر لو trialDate === النهاردة والمشرف مطابق
+// active → تظهر لو فيه معاد (regularDate) بيوم الأسبوع بتاع النهاردة
+//   ومشرف المعاد ده تحديدًا هو المشرف المطلوب (مش أي معاد تاني في نفس
+//   الحلقة، عشان حلقة ممكن يكون ليها مشرف مختلف كل يوم)
 export async function getSupervisorSessions(supervisorId) {
-  const q = query(
-    collection(db, COL),
-    where("supervisorId", "==", supervisorId),
-    where("isDeleted", "==", false),
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+  console.log("today", todayStr);
+  const todayNumber = new Date(todayStr + "T00:00:00").getDay();
+
+  const snap = await getDocs(
+    query(collection(db, COL), where("isDeleted", "==", false)),
   );
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((s) => {
+      if (s.status === "trial") {
+        return s.trialDate === todayStr && s.supervisorId === supervisorId;
+      }
+
+      if (s.status === "active") {
+        if (s.startDate && s.startDate > todayStr) return false; // لسه ماجاش موعد البداية
+        return (s.regularDates || []).some(
+          (rd) => rd.dayNumber === todayNumber && rd.supervisorId === supervisorId,
+        );
+      }
+
+      return false; // paused/cancelled/أي حالة تانية
+    });
+    console.log("seesions", snap)
 }
 
 // ── إضافة حلقة مع توزيع تلقائي ──────────────────────────────
 export async function addSession(form, teacherName) {
-  // رقم الحلقة بييجي يدوي من الفورم (form.sessionNumber) - مفيش ترقيم تلقائي
   const sessionNumber = form.sessionNumber || "";
 
-  // تحديد المشرف تلقائياً
   let supervisorId = null;
   let supervisorName = "";
+  let regularDatesWithSupervisors = form.regularDates || [];
 
-  // ← استخدام getSessionShift الموحّدة (من distributionService) بدل
-  //   الفنكشن المحلية القديمة، عشان نفس المنطق يتطبّق في كل مكان
-  const sessionShift = getSessionShift({
-    status: form.status,
-    trialTime: form.trialTime,
-    regularDates: form.regularDates,
-  });
-
-  if (sessionShift) {
-    const supsQ = query(
-      collection(db, "supervisors"),
-      where("shift", "==", sessionShift),
-      where("isActive", "==", true),
-      where("isDeleted", "==", false),
-    );
-    const supsSnap = await getDocs(supsQ);
-    const availableSups = supsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
-    if (availableSups.length) {
-      const allSnap = await getDocs(
-        query(
-          collection(db, COL),
-          where("isDeleted", "==", false),
-        ),
-      );
-      const existingSessions = allSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      const counts = {};
-      availableSups.forEach((s) => {
-        counts[s.id] = 0;
-      });
-      existingSessions
-        .filter((s) => getSessionShift(s) === sessionShift)
-        .forEach((s) => {
-          if (s.supervisorId && counts[s.supervisorId] !== undefined)
-            counts[s.supervisorId]++;
-        });
-
-      const assigned = availableSups.reduce(
-        (min, s) => (counts[s.id] < counts[min.id] ? s : min),
-        availableSups[0],
-      );
-
-      supervisorId = assigned.id;
-      supervisorName = assigned.name;
-    }
+  if (form.status === "trial") {
+    const assigned = await pickSupervisorForShift(getShiftForTime(form.trialTime), null);
+    supervisorId = assigned.supervisorId;
+    supervisorName = assigned.supervisorName;
+  } else if (form.status === "active" && form.regularDates?.length) {
+    regularDatesWithSupervisors = await assignSupervisorsToRegularDates(form.regularDates, [], null);
+    supervisorId = regularDatesWithSupervisors[0]?.supervisorId ?? null;
+    supervisorName = regularDatesWithSupervisors[0]?.supervisorName ?? "";
   }
+
   const historyDate =
     form.status === "trial"
       ? form.trialDate
@@ -148,7 +137,7 @@ export async function addSession(form, teacherName) {
     trialDate: form.trialDate || "",
     trialTime: form.trialTime || "",
     trialTeacherTime: form.trialTeacherTime || "",
-    regularDates: form.regularDates || [],
+    regularDates: regularDatesWithSupervisors,
     pauseType: form.pauseType || "",
     pauseUntil: form.pauseUntil || "",
     notes: form.notes || "",
@@ -167,10 +156,20 @@ export async function addSession(form, teacherName) {
 export async function updateSession(id, form, teacherName) {
   const sessionRef = doc(db, COL, id);
   const oldSnap = await getDoc(sessionRef);
-  const oldStatus = oldSnap.data()?.status;
-  const oldRegularDates = oldSnap.data()?.regularDates;
+  const oldData = oldSnap.data() || {};
+  const oldStatus = oldData.status;
+  const oldRegularDates = oldData.regularDates;
 
-  await updateDoc(doc(db, COL, id), {
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+
+  // ← لو الحالة الجديدة "ملغي" بتاريخ إلغاء (cancelledDate) لسه ماجاش،
+  //   أجّل الإلغاء الفعلي: الحالة الحيّة تفضل زي ما كانت (oldStatus) لحد
+  //   ما يجي يوم cancelledDate، وهتتلغى تلقائيًا وقتها عن طريق
+  //   checkAndCancelPendingSessions (بتتنفّذ كل ما نجيب الحلقات)
+  const isFutureCancellation = form.status === "cancelled" && form.cancelledDate && form.cancelledDate > todayStr;
+  const liveStatus = isFutureCancellation ? oldStatus : form.status;
+
+  await updateDoc(sessionRef, {
     studentName: form.name || "",
     studentPhone: form.phone || "",
     country: form.country || "",
@@ -178,7 +177,7 @@ export async function updateSession(id, form, teacherName) {
     teacherId: form.teacherId || null,
     teacherName: teacherName || "",
     program: form.program || "",
-    status: form.status,
+    status: liveStatus,   // ← الحيّة الفعلية، مش form.status مباشرة
     trialDate: form.trialDate || "",
     trialTime: form.trialTime || "",
     trialTeacherTime: form.trialTeacherTime || "",
@@ -190,33 +189,35 @@ export async function updateSession(id, form, teacherName) {
     makeup: form.makeup ?? null,
     cancelledDate: form.cancelledDate || "",
     startDate: form.startDate || "",
+    // ← جديد: "تذكرة" إلغاء مؤجل يقرأها checkAndCancelPendingSessions لاحقًا
+    pendingCancelDate: isFutureCancellation ? form.cancelledDate : null,
   });
 
   const historyDate =
-    form.status === "trial"
-      ? form.trialDate
-      : form.status === "active"
-        ? form.startDate
-        : form.pauseType === "dated"
-          ? form.pauseUntil
-          : form.status === "cancelled"
-            ? form.cancelledDate
-            : today;
+    liveStatus === "trial"
+      ? (form.trialDate || todayStr)
+      : liveStatus === "active"
+        ? (form.startDate || todayStr)
+        : liveStatus === "cancelled"
+          ? (form.cancelledDate || todayStr)
+          : todayStr;
 
-  if (oldStatus !== form.status) {
-    await updateDoc(doc(db, COL, id), {
-      history: arrayUnion({ date: historyDate, status: form.status }),
+  if (oldStatus !== liveStatus) {
+    await updateDoc(sessionRef, {
+      history: arrayUnion({ date: historyDate, status: liveStatus }),
     });
   }
 
-  // ← status ضرورية هنا عشان getSessionShift جوه reassignSessionOnStatusChange
-  //   تقدر تحسب الشفت الصحيح (تعتمد على session.status داخليًا)
-  await reassignSessionOnStatusChange(id, oldStatus, form.status, {
-    status: form.status,
-    trialTime: form.trialTime,
-    oldRegularDates,
-    regularDates: form.regularDates,
-  });
+  // ← لو الإلغاء مؤجل، متعملش إعادة توزيع/شيل مشرف دلوقتي — الحلقة لسه
+  //   نشطة فعليًا. الكرون هو اللي هيشيل المشرف وقت الإلغاء الفعلي.
+  if (!isFutureCancellation) {
+    await reassignSessionOnStatusChange(id, oldStatus, liveStatus, {
+      status: liveStatus,
+      trialTime: form.trialTime,
+      oldRegularDates,
+      regularDates: form.regularDates,
+    });
+  }
 }
 
 // ── toggle flagged ────────────────────────────────────────────
@@ -303,6 +304,47 @@ export async function updateAttendanceStatus(id, newStatus) {
       });
     }
   }
+}
+
+// ← يوم واحد بعد تاريخ معين (YYYY-MM-DD) — نفس منطق nextDayStr في AdminUsers.jsx
+//   (لازم نستخدم مكونات التاريخ المحلية لا toISOString عشان توقيت القاهرة)
+function nextDayStr(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + 1);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// ── رجوع الطلاب المتوقفين "لفترة محددة" لحالة نشط تلقائيًا بعد ما ينتهي pauseUntil ──
+// بتتنفّذ كل ما بنجيب الحلقات (fetchAllSessions في AppContext) عشان تفضل الحالة محدّثة
+// من غير ما نحتاج جوب/cron فعلي على السيرفر. لو الطالب pauseType === 'dated' و pauseUntil
+// فات، بيرجع 'active' فورًا ويتسجل في الـ history إنه رجع نشط بتاريخ اليوم اللي بعد pauseUntil.
+export async function checkAndRevertPausedSessions() {
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+
+  const q = query(
+    collection(db, COL),
+    where("status", "==", "paused"),
+    where("isDeleted", "==", false),
+  );
+  const snap = await getDocs(q);
+  const due = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((s) => s.pauseType === "dated" && s.pauseUntil && s.pauseUntil < todayStr);
+
+  for (const s of due) {
+    const returnDate = nextDayStr(s.pauseUntil);
+    await updateDoc(doc(db, COL, s.id), {
+      status: "active",
+      pauseType: "",
+      pauseUntil: "",
+      history: arrayUnion({ date: returnDate, status: "active" }),
+    });
+  }
+
+  return due.length; // عدد الحلقات اللي رجعت نشطة
 }
 
 // ── soft delete ───────────────────────────────────────────────

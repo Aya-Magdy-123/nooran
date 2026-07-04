@@ -14,7 +14,12 @@ import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import {
   reassignAbsentSupervisor,
   redistributeShift,
-} from "./distributionService"; // ← جديد
+} from "./distributionService";  // ← جديد
+
+import {
+  reassignAbsentSupervisorOccurrences,
+  clearFutureSubstituteOverrides,
+} from "./distributionService";
 
 const COL = "supervisors";
 
@@ -69,6 +74,8 @@ export async function restoreSupervisor(id, shift) {
 // ← دعم إجازة بفترة: لو absentFrom في المستقبل، المشرف يفضل حاضر فعليًا
 //   لحد ما checkAbsentSupervisorsJob (يوميًا 4 الفجر) يفعّل الغياب تلقائيًا.
 //   absentFrom في الماضي/النهاردة (أو مش متبعتة) = غياب فوري.
+
+
 export async function toggleAbsent(id, absentFrom = null, absentUntil = null) {
   const docSnap = await getDoc(doc(db, COL, id));
   if (!docSnap.exists()) throw new Error("المشرف مش موجود");
@@ -76,32 +83,39 @@ export async function toggleAbsent(id, absentFrom = null, absentUntil = null) {
   const supData = docSnap.data();
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Cairo' })
 
-  // لو المشرف حاضر دلوقتي وعاملينله تسجيل غياب
   if (supData.isActive) {
-    // لو تاريخ البداية مش متبعت أو هو النهاردة/فات → غياب فوري
     const startsToday = !absentFrom || absentFrom <= today
 
     await updateDoc(doc(db, COL, id), {
-      isActive: !startsToday,         // لسه حاضر لو الإجازة لسه ما بدأتش
+      isActive: !startsToday,
       absentFrom: absentFrom || null,
       absentUntil: absentUntil || null,
     });
 
     if (startsToday) {
-      await reassignAbsentSupervisor(id, supData.shift);
+      if (absentUntil) {
+        // ← بدل تغيير المشرف الدائم لكل الحلقات: نوزّع بس أيام الغياب الفعلية
+        await reassignAbsentSupervisorOccurrences(
+          id, supData.shift, absentFrom || today, absentUntil
+        );
+      } else {
+        console.warn("غياب من غير absentUntil — هيفضل مسجّل غائب من غير توزيع تلقائي، لازم يترجع يدوي");
+      }
     }
-    // لو الإجازة في المستقبل، الـ cron هو اللي هيفعّل الغياب وقت ما يجي absentFrom
+    // لو absentFrom في المستقبل، cron الساعة 4ص هو اللي هيستدعي نفس الدالة وقتها
 
     return !startsToday
   }
 
-  // لو المشرف غائب دلوقتي وعاملينله "رجوع" يدوي فوري
+  // ← رجوع يدوي فوري (قبل absentUntil الأصلي أو بعد ما كان مسجّل غائب فوري)
   await updateDoc(doc(db, COL, id), {
     isActive: true,
     absentFrom: null,
     absentUntil: null,
   });
-  await redistributeShift(supData.shift);
+  // مفيش داعي لـ redistributeShift للشيفت كله — بس ننضّف أي أيام مستقبلية
+  // كانت هتتوزع كبديل مؤقت، وباقي الأيام بترجع لصاحبها الأصلي تلقائيًا
+  await clearFutureSubstituteOverrides(id, today);
 
   return true
 }

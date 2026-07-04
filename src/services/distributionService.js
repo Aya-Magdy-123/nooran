@@ -9,6 +9,16 @@ import {
 } from "firebase/firestore";
 import { db } from "../../firebase";
 
+// ── شفت وقت معيّن ──
+export function getShiftForTime(time) {
+  if (!time) return null;
+  const hour = parseInt(time.split(":")[0]);
+  if (hour >= 4 && hour < 12) return "morning";
+  if (hour >= 12 && hour < 20) return "afternoon";
+  return "evening";
+}
+
+// ← للتوافق مع كود قديم بيستخدمها لغرض تاني (زي reassignAbsentSupervisorOccurrences تحت)
 export function getSessionShift(session) {
   const time =
     session.status === "trial"
@@ -16,17 +26,103 @@ export function getSessionShift(session) {
       : session.status === "active"
         ? session.regularDates?.[0]?.time
         : "";
-
-  if (!time) return null;
-
-  const hour = parseInt(time.split(":")[0]);
-  if (hour >= 4 && hour < 12) return "morning";
-  if (hour >= 12 && hour < 20) return "afternoon";
-  return "evening";
+  return getShiftForTime(time);
 }
 
-// ── الحالات اللي ميتوزّعش عليها مشرف خالص ──
 const NO_SUPERVISOR_STATUSES = ["cancelled", "paused"];
+
+// ← تاريخ اليوم بصيغة YYYY-MM-DD بتوقيت القاهرة (مش UTC) — مستخدمة في redistributeShift
+function todayStr() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+}
+
+// ── المشرف "الأقل عددًا" لشفت معيّن — بتعدّ كل معاد (مش كل حلقة) في نفس الشفت ──
+export async function pickSupervisorForShift(shift, excludeSessionId = null) {
+  if (!shift) return { supervisorId: null, supervisorName: "" };
+
+  const supsSnap = await getDocs(
+    query(
+      collection(db, "supervisors"),
+      where("shift", "==", shift),
+      where("isActive", "==", true),
+      where("isDeleted", "==", false),
+    ),
+  );
+  const availableSups = supsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  if (!availableSups.length) return { supervisorId: null, supervisorName: "" };
+
+  const allSnap = await getDocs(
+    query(collection(db, "sessions"), where("isDeleted", "==", false)),
+  );
+  const existingSessions = allSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((s) => s.id !== excludeSessionId && !NO_SUPERVISOR_STATUSES.includes(s.status));
+
+  const counts = {};
+  availableSups.forEach((s) => { counts[s.id] = 0; });
+
+  existingSessions.forEach((s) => {
+    if (s.status === "trial") {
+      if (getShiftForTime(s.trialTime) === shift && s.supervisorId && counts[s.supervisorId] !== undefined) {
+        counts[s.supervisorId]++;
+      }
+      return;
+    }
+    (s.regularDates || []).forEach((rd) => {
+      if (getShiftForTime(rd.time) === shift && rd.supervisorId && counts[rd.supervisorId] !== undefined) {
+        counts[rd.supervisorId]++;
+      }
+    });
+  });
+
+  // ← الإصلاح هنا: بنمسك أقل supervisor object (بخاصية .id الحقيقية)،
+  //   وبنحوّله لـ {supervisorId, supervisorName} في الآخر بس
+  const best = availableSups.reduce(
+    (min, s) => (counts[s.id] < counts[min.id] ? s : min),
+    availableSups[0],
+  );
+
+  return { supervisorId: best.id, supervisorName: best.name };
+}
+
+// ── تخصيص مشرف لكل معاد في regularDates — نفس الشفت جوه نفس الحلقة ياخد
+//   نفس المشرف، والمعاد اللي متغيرش (يوم+وقت زي القديم) يفضل زي ما هو ──
+export async function assignSupervisorsToRegularDates(newRegularDates = [], oldRegularDates = [], excludeSessionId = null) {
+  const oldMap = new Map(
+    (oldRegularDates || [])
+      .filter((rd) => rd.day && rd.time)
+      .map((rd) => [`${rd.day}__${rd.time}`, rd]),
+  );
+
+  const shiftCache = new Map();
+
+  newRegularDates.forEach((rd) => {
+    const existing = oldMap.get(`${rd.day}__${rd.time}`);
+    const shift = getShiftForTime(rd.time);
+    if (existing?.supervisorId && shift && !shiftCache.has(shift)) {
+      shiftCache.set(shift, { supervisorId: existing.supervisorId, supervisorName: existing.supervisorName });
+    }
+  });
+
+  const result = [];
+  for (const rd of newRegularDates) {
+    const existing = oldMap.get(`${rd.day}__${rd.time}`);
+    if (existing?.supervisorId) {
+      result.push({ ...rd, supervisorId: existing.supervisorId, supervisorName: existing.supervisorName });
+      continue;
+    }
+
+    const shift = getShiftForTime(rd.time);
+    if (shift && shiftCache.has(shift)) {
+      result.push({ ...rd, ...shiftCache.get(shift) });
+    } else {
+      const assigned = await pickSupervisorForShift(shift, excludeSessionId);
+      if (shift) shiftCache.set(shift, assigned);
+      result.push({ ...rd, ...assigned });
+    }
+  }
+  return result;
+}
 
 function roundRobin(sessions, supervisors) {
   return sessions.map((session, i) => {
@@ -35,26 +131,34 @@ function roundRobin(sessions, supervisors) {
   });
 }
 
-// ───────────────────────────────────────────────────────────────
-// ← إعادة توزيع حلقات مشرف غائب على باقي المشرفين المتاحين بنفس الشفت
-//   بمعزل تام عن تاريخ الحلقة — أي حلقة مؤهلة (active/trial) تابعة
-//   للمشرف ده لازم تتنقل لمشرف تاني، بغض النظر عن يوم/تاريخ ميعادها.
-// ───────────────────────────────────────────────────────────────
 export async function reassignAbsentSupervisor(absentId, shift) {
-  if (!shift) return; // حارس أمان: تجاهل لو الشفت غير محدد
+  if (!shift) return;
 
-  const sessionsSnap = await getDocs(
-    query(
+  const [trialSnap, activeSnap] = await Promise.all([
+    getDocs(query(
       collection(db, "sessions"),
-      where("status", "not-in", NO_SUPERVISOR_STATUSES),
+      where("status", "==", "trial"),
       where("supervisorId", "==", absentId),
       where("isDeleted", "==", false),
-    ),
-  );
+    )),
+    getDocs(query(
+      collection(db, "sessions"),
+      where("status", "==", "active"),
+      where("isDeleted", "==", false),
+    )),
+  ]);
 
-  if (sessionsSnap.empty) return;
+  const trialSessions = trialSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((s) => getShiftForTime(s.trialTime) === shift);
 
-  const sessions = sessionsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const activeSessions = activeSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((s) => (s.regularDates || []).some(
+      (rd) => rd.supervisorId === absentId && getShiftForTime(rd.time) === shift,
+    ));
+
+  if (!trialSessions.length && !activeSessions.length) return;
 
   const supsSnap = await getDocs(
     query(
@@ -69,38 +173,39 @@ export async function reassignAbsentSupervisor(absentId, shift) {
     .filter((s) => s.id !== absentId);
 
   const batch = writeBatch(db);
+  let idx = 0;
+  const nextSup = () => (available.length ? available[idx++ % available.length] : null);
 
-  if (!available.length) {
-    // مفيش مشرفين تانيين متاحين في هذا الشفت — نمسح المشرف من كل حلقاته
-    sessions.forEach((s) => {
-      batch.update(doc(db, "sessions", s.id), {
-        supervisorId: null,
-        supervisorName: "",
-        unassignedAt: new Date().toISOString(),
-      });
-    });
-    await batch.commit();
-    return;
-  }
-
-  roundRobin(sessions, available).forEach((s) => {
+  trialSessions.forEach((s) => {
+    const sup = nextSup();
     batch.update(doc(db, "sessions", s.id), {
-      supervisorId: s.supervisorId,
-      supervisorName: s.supervisorName,
+      supervisorId: sup?.id ?? null,
+      supervisorName: sup?.name ?? "",
       reassignedFrom: absentId,
       reassignedAt: new Date().toISOString(),
     });
   });
+
+  activeSessions.forEach((s) => {
+    const newRds = (s.regularDates || []).map((rd) => {
+      if (rd.supervisorId !== absentId || getShiftForTime(rd.time) !== shift) return rd;
+      const sup = nextSup();
+      return { ...rd, supervisorId: sup?.id ?? null, supervisorName: sup?.name ?? "" };
+    });
+    batch.update(doc(db, "sessions", s.id), {
+      regularDates: newRds,
+      supervisorId: newRds[0]?.supervisorId ?? s.supervisorId ?? null,
+      supervisorName: newRds[0]?.supervisorName ?? s.supervisorName ?? "",
+      reassignedFrom: absentId,
+      reassignedAt: new Date().toISOString(),
+    });
+  });
+
   await batch.commit();
 }
 
-// ───────────────────────────────────────────────────────────────
-// ← إعادة توزيع كل حلقات شفت معيّن على المشرفين المتاحين فيه.
-//   بمعزل تام عن تاريخ الحلقة — بتشمل أي حلقة مؤهلة (active/trial)
-//   في هذا الشفت، بغض النظر عن يوم/تاريخ ميعادها.
-// ───────────────────────────────────────────────────────────────
 export async function redistributeShift(shift) {
-  if (!shift) return; // حارس أمان: تجاهل لو الشفت غير محدد
+  if (!shift) return;
 
   const snapshot = await getDocs(
     query(
@@ -110,10 +215,21 @@ export async function redistributeShift(shift) {
     ),
   );
   const allSessions = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const today = todayStr();
 
-  const sessions = allSessions.filter((s) => getSessionShift(s) === shift);
-
-  if (!sessions.length) return;
+  // ← قبل أي تغيير: اعمل snapshot للحصص اللي فاتت بالمشرف الحالي (قبل التبديل)
+  for (const s of allSessions) {
+    if (getSessionShift(s) !== shift && !(s.regularDates || []).some(rd => getShiftForTime(rd.time) === shift)) continue
+    const pastDates = buildSessionOccurrences(s, new Map(), { rangeEnd: today })
+      .map(o => o.date)
+      .filter(d => d <= today)
+    for (const date of pastDates) {
+      await OccurrencesService.snapshotOccurrenceSupervisor(s.id, date, {
+        supervisorId: s.supervisorId,
+        supervisorName: s.supervisorName,
+      })
+    }
+  }
 
   const supsSnap = await getDocs(
     query(
@@ -126,32 +242,45 @@ export async function redistributeShift(shift) {
   const supervisors = supsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   const batch = writeBatch(db);
+  let idx = 0;
+  const nextSup = () => (supervisors.length ? supervisors[idx++ % supervisors.length] : null);
+  let touched = false;
 
-  if (!supervisors.length) {
-    // مفيش مشرفين متاحين خالص في هذا الشفت — نمسح المشرف من كل حلقاته
-    // بدل ما نسيبهم بمشرف قديم محذوف/غير موجود فعليًا
-    sessions.forEach((s) => {
+  allSessions.forEach((s) => {
+    if (s.status === "trial") {
+      if (getShiftForTime(s.trialTime) !== shift) return;
+      touched = true;
+      const sup = nextSup();
       batch.update(doc(db, "sessions", s.id), {
-        supervisorId: null,
-        supervisorName: "",
-        unassignedAt: new Date().toISOString(),
+        supervisorId: sup?.id ?? null,
+        supervisorName: sup?.name ?? "",
+        reassignedAt: new Date().toISOString(),
       });
-    });
-    await batch.commit();
-    return;
-  }
+      return;
+    }
 
-  roundRobin(sessions, supervisors).forEach((s) => {
+    const rds = s.regularDates || [];
+    let changed = false;
+    const newRds = rds.map((rd) => {
+      if (getShiftForTime(rd.time) !== shift) return rd;
+      changed = true;
+      const sup = nextSup();
+      return { ...rd, supervisorId: sup?.id ?? null, supervisorName: sup?.name ?? "" };
+    });
+    if (!changed) return;
+
+    touched = true;
     batch.update(doc(db, "sessions", s.id), {
-      supervisorId: s.supervisorId,
-      supervisorName: s.supervisorName,
+      regularDates: newRds,
+      supervisorId: newRds[0]?.supervisorId ?? null,
+      supervisorName: newRds[0]?.supervisorName ?? "",
       reassignedAt: new Date().toISOString(),
     });
   });
-  await batch.commit();
+
+  if (touched) await batch.commit();
 }
 
-// ── مقارنة عميقة بسيطة بين مصفوفتين من المواعيد (regularDates) ──
 function regularDatesChanged(oldDates, newDates) {
   const a = oldDates || [];
   const b = newDates || [];
@@ -159,33 +288,16 @@ function regularDatesChanged(oldDates, newDates) {
   return JSON.stringify(a) !== JSON.stringify(b);
 }
 
-// ───────────────────────────────────────────────────────────────
-// ── توزيع/إزالة مشرف لحلقة واحدة بمفردها — تُستخدم عند التعديل ──
-// ───────────────────────────────────────────────────────────────
-//
-// تُستدعى من updateSession (sessionsService.js) كل ما تتغيّر حالة الحلقة
-// أو تتغيّر مواعيدها (regularDates/trialTime).
-// بتأثر بس على الحلقة المعدَّلة، مالهاش أي تأثير على باقي حلقات الشفت.
-//
-// المنطق:
-//  - لو الحالة الجديدة cancelled أو paused → تشال المشرف خالص (يظهر "—" في الواجهة).
-//  - لو الحالة الجديدة active أو trial وكانت الحالة القديمة مختلفة عنها،
-//    أو المواعيد اتغيّرت (مما يعني الشفت ممكن يكون اتغيّر) → يتوزّع عليها
-//    مشرف تلقائيًا بمنطق "الأقل عددًا" (نفس منطق addSession في sessionsService.js).
-//  - لو الحالة الجديدة زي القديمة بالظبط والمواعيد متغيّرتش → مفيش أي تغيير
-//    على المشرف، يفضل كما هو.
-
+// ── توزيع مشرف/مشرفين لحلقة واحدة — تُستدعى من updateSession ──
 export async function reassignSessionOnStatusChange(sessionId, oldStatus, newStatus, sessionData) {
   const { regularDates, oldRegularDates, trialTime } = sessionData;
 
-  // لا الحالة اتغيّرت ولا المواعيد اتغيّرت → مفيش حاجة نعملها
   if (oldStatus === newStatus && !regularDatesChanged(oldRegularDates, regularDates)) {
     return;
   }
 
   const sessionRef = doc(db, "sessions", sessionId);
 
-  // ── الحالة الجديدة ملغي/متوقف → نشيل المشرف خالص ──
   if (NO_SUPERVISOR_STATUSES.includes(newStatus)) {
     await updateDoc(sessionRef, {
       supervisorId: null,
@@ -195,60 +307,101 @@ export async function reassignSessionOnStatusChange(sessionId, oldStatus, newSta
     return;
   }
 
-  // ── الحالة الجديدة نشط/تجريبي → نوزّع مشرف جديد تلقائيًا ──
-  if (newStatus === "active" || newStatus === "trial") {
-    const shift = getSessionShift({ status: newStatus, trialTime, regularDates });
-    if (!shift) return; // مفيش وقت محدد لسه، مينفعش نحدد الشفت
+  if (newStatus === "trial") {
+    const assigned = await pickSupervisorForShift(getShiftForTime(trialTime), sessionId);
+    await updateDoc(sessionRef, {
+      supervisorId: assigned.supervisorId,
+      supervisorName: assigned.supervisorName,
+      reassignedAt: new Date().toISOString(),
+    });
+    return;
+  }
 
-    const supsQ = query(
+  if (newStatus === "active") {
+    if (!regularDates?.length) return;
+    const newRds = await assignSupervisorsToRegularDates(
+      regularDates,
+      oldStatus === "active" ? oldRegularDates : [],
+      sessionId,
+    );
+    await updateDoc(sessionRef, {
+      regularDates: newRds,
+      supervisorId: newRds[0]?.supervisorId ?? null,
+      supervisorName: newRds[0]?.supervisorName ?? "",
+      reassignedAt: new Date().toISOString(),
+    });
+  }
+}
+
+import { buildSessionOccurrences } from "../utils/generateOccurrences";
+import * as OccurrencesService from "./occurrencesService";
+
+export async function reassignAbsentSupervisorOccurrences(absentId, shift, fromDate, toDate) {
+  if (!shift || !fromDate || !toDate) {
+    console.warn("[reassignAbsentSupervisorOccurrences] محتاج shift + fromDate + toDate");
+    return;
+  }
+
+  const sessionsSnap = await getDocs(
+    query(
+      collection(db, "sessions"),
+      where("status", "not-in", NO_SUPERVISOR_STATUSES),
+      where("isDeleted", "==", false),
+    ),
+  );
+  const mySessions = sessionsSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((s) =>
+      s.status === "trial"
+        ? s.supervisorId === absentId && getShiftForTime(s.trialTime) === shift
+        : (s.regularDates || []).some((rd) => rd.supervisorId === absentId && getShiftForTime(rd.time) === shift),
+    );
+
+  if (!mySessions.length) return;
+
+  const supsSnap = await getDocs(
+    query(
       collection(db, "supervisors"),
       where("shift", "==", shift),
       where("isActive", "==", true),
       where("isDeleted", "==", false),
-    );
-    const supsSnap = await getDocs(supsQ);
-    const availableSups = supsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    ),
+  );
+  const others = supsSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((s) => s.id !== absentId);
 
-    if (!availableSups.length) {
-      // مفيش مشرفين متاحين لهذا الشفت — تفضل بدون مشرف
-      await updateDoc(sessionRef, {
-        supervisorId: null,
-        supervisorName: "",
-      });
-      return;
-    }
-
-    // نفس منطق "الأقل عددًا" المستخدم في addSession
-    const existingSnap = await getDocs(
-      query(
-        collection(db, "sessions"),
-        where("isDeleted", "==", false),
-        where("status", "not-in", NO_SUPERVISOR_STATUSES),
-      ),
-    );
-    const existingSessions = existingSnap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .filter((s) => s.id !== sessionId); // استثني الحلقة نفسها من العدّ
-
-    const counts = {};
-    availableSups.forEach((s) => { counts[s.id] = 0; });
-    existingSessions
-      .filter((s) => getSessionShift(s) === shift)
-      .forEach((s) => {
-        if (s.supervisorId && counts[s.supervisorId] !== undefined) {
-          counts[s.supervisorId]++;
-        }
-      });
-
-    const assigned = availableSups.reduce(
-      (min, s) => (counts[s.id] < counts[min.id] ? s : min),
-      availableSups[0],
-    );
-
-    await updateDoc(sessionRef, {
-      supervisorId: assigned.id,
-      supervisorName: assigned.name,
-      reassignedAt: new Date().toISOString(),
-    });
+  if (!others.length) {
+    console.warn(`[reassignAbsentSupervisorOccurrences] مفيش مشرفين تانيين متاحين في شيفت "${shift}"`);
+    return;
   }
+
+  let cursor = 0;
+  for (const session of mySessions) {
+    const dates = buildSessionOccurrences(session, new Map(), {
+      rangeStart: fromDate,
+      rangeEnd: toDate,
+    }).map((o) => o.date);
+
+    for (const date of dates) {
+      const sub = others[cursor % others.length];
+      cursor++;
+      await OccurrencesService.upsertOccurrence(session.id, date, {
+        supervisorId: sub.id,
+        supervisorName: sub.name,
+        substituteFor: absentId,
+      });
+    }
+  }
+}
+
+export async function clearFutureSubstituteOverrides(absentId, fromDate) {
+  const snap = await getDocs(
+    query(
+      collection(db, "sessionOccurrences"),
+      where("substituteFor", "==", absentId),
+      where("date", ">=", fromDate),
+    ),
+  );
+  await Promise.all(snap.docs.map((d) => OccurrencesService.unsetSupervisorOverride(d.id)));
 }

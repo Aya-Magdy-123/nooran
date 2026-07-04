@@ -1,14 +1,14 @@
 import { onAuthStateChanged } from 'firebase/auth'
-import { auth } from '../../firebase'
-import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { auth, db } from '../../firebase'
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import * as SupervisorsService from '../services/supervisorsService'
 import * as TeachersService    from '../services/teachersService'
 import * as ProgramsService    from '../services/programsService'
 import * as SessionsService    from '../services/sessionsService'
 import * as DistributionService from '../services/distributionService'
 import * as PostponeService from '../services/postponeService'
-import { collection, getDocs } from 'firebase/firestore'
-
+import * as OccurrencesService from '../services/occurrencesService' // ← جديد
+import { collection, getDocs, onSnapshot, query, where } from 'firebase/firestore'
 
 
 const AppContext = createContext(null)
@@ -51,6 +51,11 @@ const[allSessions, setAllSessions]= useState([]);
 const[allSessionsLoading, setAllSessionsLoading]= useState(false);
 const[allSessionsError, setAllSessionsError]= useState(false);
 
+// ← جديد: الحصص المعدَّلة (overrides فوق الجدول الافتراضي للحلقات) — sessionOccurrences
+const [occurrences,        setOccurrences]        = useState([])
+const [occurrencesLoading, setOccurrencesLoading] = useState(false)
+const [occurrencesError,   setOccurrencesError]   = useState(null)
+
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
@@ -89,6 +94,8 @@ const[allSessionsError, setAllSessionsError]= useState(false);
    const fetchAllSessions = useCallback (async()=> {
     try{
       setAllSessionsLoading(true);
+      // ← قبل الجلب، رجّع أي طالب "متوقف لفترة محددة" انتهت مدته لحالة نشط تلقائيًا
+      await SessionsService.checkAndRevertPausedSessions();
       const res = await SessionsService.getAllSessions();
       console.log(res);
       
@@ -103,23 +110,32 @@ const[allSessionsError, setAllSessionsError]= useState(false);
     }
   },[]);
 
+  // ← جديد: جلب كل الـ occurrences (overrides) مرة واحدة عند فتح الصفحة
+  const fetchOccurrences = useCallback(async () => {
+    try {
+      setOccurrencesLoading(true); setOccurrencesError(null)
+      const data = await OccurrencesService.getAllOccurrences()
+      setOccurrences(data)
+    } catch (err) { setOccurrencesError(err.message) }
+    finally { setOccurrencesLoading(false) }
+  }, [])
 
-  const fetchSessionsForSupervisor = useCallback (async(supervisorId)=> {
-    try{
-      setSessionsForSupervisorLoading(true);
-      const sessions = await SessionsService.getSessionsPerDay();
-      const sessionsPerSupervisor = sessions.filter((s) => s.supervisorId === supervisorId);
 
-      setSessionsForSupervisor(sessionsPerSupervisor);
-      setSessionsForSupervisorLoading(false);
-    }
-    catch(e){
-      setSessionsForSupervisorError(e.message);
-    }
-    finally{
-      setSessionsForSupervisorLoading(false);
-    }
-  },[]);
+const fetchSessionsForSupervisor = useCallback (async(supervisorId)=> {
+  try{
+    setSessionsForSupervisorLoading(true);
+    // ← بدل getSessionsPerDay() (بتجيب حصص اليوم بس) + فلترة يدوية،
+    //   هات كل حلقات المشرف مباشرة من Firestore بغض النظر عن التاريخ
+    const sessionsPerSupervisor = await SessionsService.getSupervisorSessions(supervisorId);
+    setSessionsForSupervisor(sessionsPerSupervisor);
+  }
+  catch(e){
+    setSessionsForSupervisorError(e.message);
+  }
+  finally{
+    setSessionsForSupervisorLoading(false);
+  }
+},[]);
 
 
 
@@ -172,21 +188,94 @@ const fetchSessionsForDistribution = useCallback(async() => {
     fetchSupervisors()
     fetchTeachers()
     fetchPrograms()
-    fetchPostponeRequests()
-    fetchAllSessions()   // ← تحميل كل الحلقات مرة واحدة عند فتح الصفحة (للفلاتر/الـ pagination الـ client-side)
-  }, [authReady, currentUser, fetchSupervisors, fetchTeachers, fetchPrograms, fetchPostponeRequests, fetchAllSessions])
+    // ← sessions / occurrences / postponeRequests بقوا realtime عن طريق onSnapshot (تحت)، مش محتاجين fetch يدوي هنا
+  }, [authReady, currentUser, fetchSupervisors, fetchTeachers, fetchPrograms])
+
+  // ← فحص "رجوع الطلاب المتوقفين نشط تلقائيًا" مرة واحدة بس عند فتح الصفحة
+  //   (الفحص الحقيقي/اليومي شغال على السيرفر عبر resumePausedSessionsJob،
+  //   واللي بيكتب على Firestore مباشرة — والـ onSnapshot تحت هيستقبل نتيجته
+  //   لحظيًا زي أي تغيير تاني، من غير ما نحتاج نستدعيه إحنا تاني)
+  const pausedCheckedRef = useRef(false)
+
+  // ═══════════════════════════════════════════════════════════
+  // ─── Realtime listeners (Firestore onSnapshot) ────────────────
+  // بدل ما نجيب sessions / occurrences / postponeRequests مرة واحدة بس
+  // وبعدين نعتمد على polling، بنعمل subscribe مباشر عليهم. أي تغيير يحصل
+  // من برّه اللوحة (رد الطالب على الواتساب عبر الويب هوك، أو الجوب اليومي
+  // اللي بيرجّع الطلاب المتوقفين نشط) بيوصل فورًا لكل تاب مفتوح من غير أي
+  // refresh يدوي أو تأخير.
+  // ═══════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!authReady || !currentUser) return
+
+    setAllSessionsLoading(true)
+    const unsub = onSnapshot(
+      collection(db, 'sessions'),
+      (snap) => {
+        setAllSessions(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+        setAllSessionsLoading(false)
+        setAllSessionsError(null)
+
+        if (!pausedCheckedRef.current) {
+          pausedCheckedRef.current = true
+          SessionsService.checkAndRevertPausedSessions().catch(() => {}) // ← شبكة أمان، صامتة لو فشلت
+        }
+      },
+      (err) => { setAllSessionsError(err.message); setAllSessionsLoading(false) }
+    )
+    return () => unsub()
+  }, [authReady, currentUser])
+
+  useEffect(() => {
+    if (!authReady || !currentUser) return
+
+    setOccurrencesLoading(true)
+    const unsub = onSnapshot(
+      collection(db, 'sessionOccurrences'),
+      (snap) => {
+        setOccurrences(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+        setOccurrencesLoading(false)
+        setOccurrencesError(null)
+      },
+      (err) => { setOccurrencesError(err.message); setOccurrencesLoading(false) }
+    )
+    return () => unsub()
+  }, [authReady, currentUser])
+
+  useEffect(() => {
+    if (!authReady || !currentUser) return
+
+    setPostponeLoading(true)
+    const unsub = onSnapshot(
+      collection(db, 'postponeRequests'),
+      (snap) => {
+        setPostponeRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+        setPostponeLoading(false)
+        setPostponeError(null)
+      },
+      (err) => { setPostponeError(err.message); setPostponeLoading(false) }
+    )
+    return () => unsub()
+  }, [authReady, currentUser])
 
   // ─── Supervisors CRUD ──────────────────────────────────────
   const addSupervisor = async (form) => {
     await SupervisorsService.addSupervisor({ ...form, isActive: form.status === 'active' })
     await fetchSupervisors()
   }
-  const updateSupervisor = async (s) => {
-    await SupervisorsService.updateSupervisor(s.id, {
-      name: s.name, phone: s.phone, shift: s.shift, isActive: s.status === 'active'
-    })
-    await fetchSupervisors()
+const updateSupervisor = async (s) => {
+  const before = supervisors.find(sup => sup.id === s.id)   // ← الشيفت القديم قبل التعديل
+  await SupervisorsService.updateSupervisor(s.id, {
+    name: s.name, phone: s.phone, shift: s.shift, isActive: s.status === 'active'
+  })
+  await fetchSupervisors()
+
+  // ← لو الشيفت اتغيّر، أعد توزيع الشيفتين (القديم والجديد) تلقائيًا
+  if (before && before.shift !== s.shift) {
+    await DistributionService.redistributeShift(before.shift)
+    await DistributionService.redistributeShift(s.shift)
   }
+}
   const deleteSupervisor  = async (id, shift) => { await SupervisorsService.deleteSupervisor(id, shift);  await fetchSupervisors() }
   const restoreSupervisor = async (id, shift) => { await SupervisorsService.restoreSupervisor(id, shift); await fetchSupervisors() }
   // ← بقت بتاخد absentFrom (بداية الإجازة) و absentUntil (نهايتها) بدل ما كانت تاريخ واحد بس
@@ -209,23 +298,21 @@ const fetchSessionsForDistribution = useCallback(async() => {
   // ─── Sessions CRUD — بتشتغل على allSessions محليًا، بدون إعادة جلب كل الحلقات ──
   // كل عملية هنا بتعمل أقل عدد قراءات ممكن: قراءة واحدة (getDoc) بعد الكتابة، أو صفر قراءات للحذف/الفلاج.
 
-  // إضافة حلقة — كتابة واحدة + قراءة واحدة (getDoc) للتأكد من تطابق البيانات، بعدين إضافة النتيجة محليًا
-  const addSessionLocal = async (form, teacherName) => {
-    const teacher = teachers.find(t => t.id === form.teacherId)
-    const result  = await SessionsService.addSession(form, teacher?.name || teacherName || '')
-    const fresh   = await SessionsService.getSessionById(result.id)   // قراءة واحدة بس
-    if (fresh) setAllSessions(prev => [fresh, ...prev])
-    return result
-  }
+// إضافة حلقة — الاعتماد الكامل على onSnapshot لتحديث allSessions، بدون أي setAllSessions يدوي
+const addSessionLocal = async (form, teacherName) => {
+  const teacher = teachers.find(t => t.id === form.teacherId)
+  const result  = await SessionsService.addSession(form, teacher?.name || teacherName || '')
+  // ← ملحوظة: مفيش setAllSessions هنا خالص — onSnapshot هيستقبل الإضافة تلقائيًا
+  return result
+}
 
-  // تعديل حلقة — كتابة + قراءة واحدة (getDoc)، بعدين استبدال العنصر محليًا في allSessions
-  const updateSessionLocal = async (id, form, teacherName) => {
-    const teacher = teachers.find(t => t.id === form.teacherId)
-    await SessionsService.updateSession(id, form, teacher?.name || teacherName || '')
-    const fresh = await SessionsService.getSessionById(id)   // قراءة واحدة بس
-    if (fresh) setAllSessions(prev => prev.map(s => s.id === id ? fresh : s))
-    return fresh
-  }
+// تعديل حلقة — نفس الفكرة، onSnapshot هيحدّث allSessions تلقائيًا
+const updateSessionLocal = async (id, form, teacherName) => {
+  const teacher = teachers.find(t => t.id === form.teacherId)
+  await SessionsService.updateSession(id, form, teacher?.name || teacherName || '')
+  const fresh = await SessionsService.getSessionById(id) // لو محتاجه للـ return value بس (زي استخدامه في saveMakeup)
+  return fresh
+}
 
   // حذف (soft delete) — بعد تأكيد الكتابة في Firestore، نشيل العنصر محليًا بدون أي قراءة إضافية
   const deleteSessionLocal = async (id) => {
@@ -241,16 +328,24 @@ const fetchSessionsForDistribution = useCallback(async() => {
   }
 
   // تعويض — بعد تأكيد الكتابة، نحدّث محليًا بنفس القيمة اللي بعتناها (بدون قراءة إضافية)
-const updateMakeupLocal = async (id, makeup) => {
-  await SessionsService.updateMakeup(id, makeup)
-  if (makeup?.date) {
-    await PostponeService.resolvePostponeBySessionId(id, makeup.date, makeup.studentTime)
+  const updateMakeupLocal = async (id, makeup) => {
+    await SessionsService.updateMakeup(id, makeup)
+
+    if (makeup?.date) {
+      const resolvedList = await PostponeService.resolvePostponeBySessionId(id, makeup.date, makeup.studentTime)
+      for (const r of resolvedList) {
+        if (!r.originalDate) continue
+        await upsertOccurrenceLocal(r.sessionId, r.originalDate, {
+          status: 'makeup',
+          makeupDate: makeup.date,
+        })
+      }
+    }
+
+    setAllSessions(prev => prev.map(s => s.id === id ? { ...s, makeup: makeup ?? null } : s))
+    setSessionsForSupervisor(prev => prev.map(s => s.id === id ? { ...s, makeup: makeup ?? null } : s))
+    await fetchPostponeRequests()
   }
-  setAllSessions(prev => prev.map(s => s.id === id ? { ...s, makeup: makeup ?? null } : s))
-  // ← أضف السطر ده
-  setSessionsForSupervisor(prev => prev.map(s => s.id === id ? { ...s, makeup: makeup ?? null } : s))
-  await fetchPostponeRequests()
-}
 
 // ─── تحديث حالة الحضور يدويًا (من لوحة المشرف) ─────────────────
 const updateAttendanceStatus = async (id, newStatus) => {
@@ -266,10 +361,66 @@ const updateAttendanceStatus = async (id, newStatus) => {
 }
 
   // ─── Postpone  ──────────────────────────────────
-const resolvePostpone = async (id, newDate, newTime) => {
-  await PostponeService.resolvePostponeRequest(id, newDate, newTime)
-  await fetchPostponeRequests()
-}
+  const resolvePostpone = async (id, newDate, newTime) => {
+    const resolved = await PostponeService.resolvePostponeRequest(id, newDate, newTime)
+
+    if (resolved?.originalDate) {
+      await upsertOccurrenceLocal(resolved.sessionId, resolved.originalDate, {
+        status: 'makeup',
+        makeupDate: newDate,
+      })
+    }
+
+    await fetchPostponeRequests()
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // ─── Occurrences (حصص الحلقات) ───────────────────────────────
+  // ← جديد: تحديث/إنشاء override لحصة واحدة محليًا، بدون إعادة جلب كل الـ occurrences.
+  //   لو الـ patch فيه status، بنستخدم updateOccurrenceStatus (نفس منطق الواتساب:
+  //   confirmed / absent / postponed / pending... مع فتح postponeRequest تلقائي
+  //   عند postponed). أي حقول تانية (زي makeupDate يدوي) بتتطبّق فوقها بـ upsert عادي.
+  //
+  //   meta (اختياري): { studentName, studentPhone, teacherName, supervisorId, time }
+  //   بتُستخدم بس لو الحالة postponed عشان بناء postponeRequest كامل البيانات
+  // ═══════════════════════════════════════════════════════════
+  const upsertOccurrenceLocal = async (sessionId, date, patch = {}, meta = {}) => {
+    let result
+
+    if (patch.status) {
+      result = await OccurrencesService.updateOccurrenceStatus(sessionId, date, patch.status, meta)
+
+      // لو فيه حقول إضافية اتبعتت مع status (مثلاً makeupDate يدوي من المشرف)
+      const extra = { ...patch }
+      delete extra.status
+      if (Object.keys(extra).length) {
+        result = await OccurrencesService.upsertOccurrence(sessionId, date, extra)
+      }
+    } else {
+      result = await OccurrencesService.upsertOccurrence(sessionId, date, patch)
+    }
+
+    setOccurrences(prev => {
+      const idx = prev.findIndex(o => o.sessionId === sessionId && o.date === date)
+      if (idx === -1) return [...prev, result]
+      const next = [...prev]
+      next[idx] = { ...next[idx], ...result }
+      return next
+    })
+
+    // لو اتحولت لـ postponed، حدّث قائمة طلبات التأجيل عشان تظهر فورًا
+    if (patch.status === 'postponed') {
+      await fetchPostponeRequests()
+    }
+
+    return result
+  }
+
+  // حذف override — رجوع الحصة لحالتها الافتراضية المتولّدة
+  const deleteOccurrenceLocal = async (occurrenceId, sessionId, date) => {
+    await OccurrencesService.deleteOccurrence(occurrenceId)
+    setOccurrences(prev => prev.filter(o => o.id !== occurrenceId))
+  }
 
 
 
@@ -288,6 +439,10 @@ const resolvePostpone = async (id, newDate, newTime) => {
       addProgram, updateProgram, deleteProgram,
 
       fetchAllSessions, allSessions, allSessionsLoading, allSessionsError,
+
+      // ← جديد: occurrences
+      occurrences, occurrencesLoading, occurrencesError, fetchOccurrences,
+      upsertOccurrenceLocal, deleteOccurrenceLocal,
 
       sessionsPerDay, sessionsPerDayError, sessionsPerDayLoading, fetchSessionsPerDay, sessionsForSupervisor, fetchSessionsForSupervisor,
       sessionsForSupervisorLoading, sessionsForSupervisorError,

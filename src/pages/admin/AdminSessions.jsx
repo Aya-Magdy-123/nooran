@@ -3,6 +3,8 @@ import { Plus, Pencil, Trash2, Star, Filter, BookOpen, Clock, Calendar, User } f
 import { useApp } from '../../context/AppContext'
 import StudentSessionForm from '../../components/ui/StudentSessionForm'
 import MakeupModal from '../../components/ui/MakeupModal'
+// ← توليد الحصص (occurrences) ديناميكيًا فوق الحلقات، بدون تخزينها كلها
+import { generateOccurrences, monthRange, dayRange } from '../../utils/generateOccurrences'
 
 const DAYS_AR   = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']
 const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
@@ -22,6 +24,36 @@ const SESSION_STATUS_STYLE = {
 const STATUS_LABELS = {
   active:'نشط', trial:'تجريبي', onhold:'موقوف', cancelled:'ملغي', paused:'متوقف',
   scheduled:'مجدول', confirmed:'مؤكد', noshow:'غياب', completed:'مكتمل',
+}
+
+// ← حالة الحصة (occurrence) — مختلفة تمامًا عن حالة الحلقة (session)
+// الحالة الحقيقية بتيجي من ردّ الطالب على رسالة الواتساب (3 حالات فقط:
+// هيحضر / لن يحضر / هيطلب تعويض)، أما cancelled و makeup فبيحددهم المشرف
+// يدويًا. لو لسه مفيش رد → "قيد الانتظار" (pending) وهي الحالة الافتراضية.
+const OCCURRENCE_STATUS_LABELS = {
+  pending:   'قيد الانتظار',
+  confirmed: 'سيحضر',
+  absent:    'لن يحضر',
+  postponed: 'طلب تعويض',
+  makeup:    'تعويض محدَّد',
+  cancelled: 'ملغاة',
+}
+const OCCURRENCE_STATUS_STYLE = {
+  pending:   'bg-slate-50 text-slate-500 border-slate-200',
+  confirmed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  absent:    'bg-red-50 text-red-600 border-red-200',
+  postponed: 'bg-orange-50 text-orange-700 border-orange-200',
+  makeup:    'bg-purple-50 text-purple-700 border-purple-200',
+  cancelled: 'bg-red-50 text-red-600 border-red-200',
+}
+
+// ── تحديد الشفت من وقت معيّن (نفس منطق distributionService.js) ──
+function getShiftForTime(time) {
+  if (!time) return null
+  const hour = parseInt(time.split(':')[0])
+  if (hour >= 4  && hour < 12) return 'morning'
+  if (hour >= 12 && hour < 20) return 'afternoon'
+  return 'evening'
 }
 
 function calcTeacherTime(time, timezone) {
@@ -52,51 +84,7 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
-// ── دالة مساعدة: هل التاريخ ده واقع ضمن الفترة المختارة (من - إلى)؟ ──
-function isInDateRange(dateStr, from, to) {
-  if (!dateStr) return false
-  const d = new Date(dateStr)
-  if (isNaN(d)) return false
-  if (from) {
-    const f = new Date(from)
-    if (d < f) return false
-  }
-  if (to) {
-    const t = new Date(to)
-    t.setHours(23, 59, 59, 999) // ← يشمل آخر لحظة في يوم "إلى"
-    if (d > t) return false
-  }
-  return true
-}
-
-
-// ── دالة مساعدة: استخراج شهر-سنة (MM-YYYY) من تاريخ ──
-function toMonthYear(dateStr) {
-  if (!dateStr) return null
-  const d = new Date(dateStr)
-  if (isNaN(d)) return null
-  return `${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`
-}
-
-// ── دالة مساعدة: هل التاريخ ده (YYYY-MM-DD) في المستقبل بالنسبة للنهاردة؟ ──
-function isFutureDateStr(dateStr) {
-  if (!dateStr) return false
-  return dateStr > todayStr()
-}
-
-// ── دالة مساعدة: هل الشهر/السنة (MM-YYYY) ده في المستقبل بالنسبة للشهر الحالي؟ ──
-function isFutureMonthYear(monthYearStr) {
-  if (!monthYearStr) return false
-  const [mm, yyyy] = monthYearStr.split('-').map(Number)
-  const now  = new Date()
-  const curY = now.getFullYear()
-  const curM = now.getMonth() + 1
-  if (yyyy > curY) return true
-  if (yyyy === curY && mm > curM) return true
-  return false
-}
-
-// ── دالة مساعدة: اسم يوم الأسبوع (بالعربي) لتاريخ معيّن، بدون مشاكل التايم زون ──
+// ── اسم يوم الأسبوع (بالعربي) لتاريخ معيّن، بدون مشاكل التايم زون ──
 function getDayNameFromDateStr(dateStr) {
   if (!dateStr) return null
   const [y, m, d] = dateStr.split('-').map(Number)
@@ -105,10 +93,21 @@ function getDayNameFromDateStr(dateStr) {
 }
 
 // ── هل الحلقة فيها اليوم المختار؟ ──
-function matchesDay(s, day) {
-  if (day === 'all' || !day) return true
-  return (s.regularDates || []).some(d => d.day === day)
+function matchesDay(s, days) {
+  if (!days || days.includes('all')) return true
+  return (s.regularDates || []).some(d => days.includes(d.day))
 }
+
+
+// ── أدوات تاريخ للتوسيع بالأفق (rangeEnd متزايد بدل limitCount) ──
+function addDaysStr(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  dt.setDate(dt.getDate() + days)
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+}
+
+const FUTURE_HORIZON_STEP_DAYS = 60 // كل توسيع بيمد الأفق 60 يوم قدام، بلا أي سقف نهائي
 
 const ic = "w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all"
 
@@ -202,16 +201,13 @@ function MultiFilterSelect({ value, onChange, options, label }) {
   )
 }
 
-function MakeupCell({ session, onOpen, onClearRequest }) {
-  const { makeup } = session
-
-  // ← الشرط الصحيح: يظهر بس لو فيه طلب تأجيل معلّق ومفيش makeup مؤكد
-  const eligible = session.attendanceStatus === 'postponed' && !makeup?.confirmed
+function MakeupCell({ occurrence, onOpen, onClearRequest }) {
+  if (!occurrence) return <span className="text-slate-300 text-xs">—</span>
+  const { makeup } = occurrence
 
   if (!makeup?.confirmed) {
-    // if (eligible) return <span className="text-slate-300 text-xs">—</span>
     return (
-      <button onClick={() => onOpen(session)}
+      <button onClick={() => onOpen(occurrence)}
         className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
         <Plus size={12}/> تعويض
       </button>
@@ -223,7 +219,7 @@ function MakeupCell({ session, onOpen, onClearRequest }) {
     return (
       <div className="flex flex-col gap-1">
         <span className="text-xs text-slate-400 line-through">{makeup.date} — {makeup.studentTime}</span>
-        <button onClick={() => onOpen(session)}
+        <button onClick={() => onOpen(occurrence)}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
           <Clock size={12}/> تعويض جديد
         </button>
@@ -243,7 +239,7 @@ function MakeupCell({ session, onOpen, onClearRequest }) {
         {makeup.teacherTime && makeup.teacherTime !== makeup.studentTime &&
           <span className="text-purple-500"> (مصر: {makeup.teacherTime})</span>}
       </span>
-      <button onClick={() => onClearRequest(session.id)}
+      <button onClick={() => onClearRequest(occurrence)}
         className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs hover:bg-red-200 transition-all">
         ✕
       </button>
@@ -255,7 +251,9 @@ const EMPTY_FORM = {
   name: '', phone: '', country: '', contactMethod: '',
   teacherId: '', program: '', status: 'trial',
   _hasBeenActive: false,
-  trialDate: '', trialTime: '', startDate: '',
+  sessionNumber: '',
+  trialDate: '', trialTime: '', trialTeacherTime: '',
+  startDate: '', cancelledDate: '',
   regularDates: [{ day: '', time: '', teacherTime: '', timezone: 'Africa/Cairo' }],
   pauseType: '', pauseUntil: '', notes: '', flagged: false,
 }
@@ -267,6 +265,7 @@ const {
   allSessions, allSessionsLoading, allSessionsError, fetchAllSessions,
   teachers, supervisors, programs,
   addSessionLocal, updateSessionLocal, deleteSessionLocal, toggleFlagLocal, updateMakeupLocal,
+  occurrences, upsertOccurrenceLocal, // ← الحصص المعدَّلة + دالة تحديثها (بمنطق الواتساب)
     postponeRequests, postponeLoading, resolvePostpone, 
 } = useApp()
 
@@ -275,10 +274,10 @@ const {
 
   const [search,           setSearch]           = useState('')
   const [filterStatus,     setFilterStatus]     = useState(['all'])
-  const [filterTeacher,    setFilterTeacher]    = useState('all')
-  const [filterSupervisor, setFilterSupervisor] = useState('all')
-  const [filterDay,        setFilterDay]        = useState('all')
-  // ← نوع فلتر التاريخ: بدون / فترة (من-إلى) / يوم محدد / شهر محدد
+  const [filterTeacher,    setFilterTeacher]    = useState(['all'])
+  const [filterSupervisor, setFilterSupervisor] = useState(['all'])
+  const [filterDay,        setFilterDay]        = useState(['all'])
+  // ← نوع فلتر التاريخ (على مستوى الحصص/occurrences): بدون (= من النهارده وطالع) / كل السجل / فترة / يوم محدد / شهر محدد
   const [dateFilterMode,   setDateFilterMode]   = useState('none')
   const [filterDateFrom,   setFilterDateFrom]   = useState('')
   const [filterDateTo,     setFilterDateTo]     = useState('')
@@ -286,6 +285,10 @@ const {
   const [filterMonthYear,  setFilterMonthYear]  = useState('')
   const [filterSessionNumber, setFilterSessionNumber] = useState('')
   const [flaggedOnly,      setFlaggedOnly]      = useState(false)
+  // ← فلتر حالة الحصة (occurrence-level)
+  const [filterOccStatus,  setFilterOccStatus]  = useState('all')
+  // ← فلتر الطالب — شرط إضافي بيتظافر مع باقي الفلاتر، مش مسار منفصل
+  const [filterStudentId,  setFilterStudentId]  = useState('')
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editItem,  setEditItem]  = useState(null)
@@ -298,148 +301,200 @@ const {
   const [confirm, setConfirm] = useState(null)
 
   const [showPostpone, setShowPostpone] = useState(false)
-  // 1. أضف الـ state ده مع باقي الـ states
-const [postponeResolving, setPostponeResolving] = useState(null)
+  const [postponeResolving, setPostponeResolving] = useState(null)
 
-  // ← صفحة العرض الحالية (client-side pagination)
+  // ← صفحة العرض الحالية (client-side pagination) — موحّدة لكل الأوضاع
   const [page, setPage] = useState(1)
 
-const sessionsMatchesDateRange = useMemo(() => {
-  if (!filterDateFrom && !filterDateTo) return liveSessions;
+  const [makeupOccurrence, setMakeupOccurrence] = useState(null) // ← بدل makeupSession القديمة
 
-  // ← هل الفترة المختارة بالكامل في المستقبل؟ (بنحكم بالتاريخ المعرّف منهم: من، وإلا إلى)
-  const anchorDate   = filterDateFrom || filterDateTo
-  const rangeIsFuture = isFutureDateStr(anchorDate)
-  const isSingleDay   = !!filterDateFrom && !!filterDateTo && filterDateFrom === filterDateTo
 
-  if (rangeIsFuture) {
-    if (isSingleDay) {
-      // ← يوم واحد مستقبلي ضمن الفترة: نطابق على يوم الأسبوع بتاعه + نشط فقط
-      const dayName = getDayNameFromDateStr(filterDateFrom)
-      return liveSessions.filter(s => s.status === 'active' && matchesDay(s, dayName))
-    }
-    // ← فترة أطول من يوم في المستقبل: نعرض النشطين فقط (بدون تقييد بيوم أسبوع معيّن)
-    return liveSessions.filter(s => s.status === 'active')
+  // ← أفق المستقبل (تاريخ نهاية) لوضعي "من النهارده وطالع" و"كل السجل" —
+  //   كل ضغطة "التالي" لما توصل آخر صفحة متولّدة بتوسّع الأفق ده بمقدار
+  //   FUTURE_HORIZON_STEP_DAYS، بدل ما تولّد بالعدد (limitCount) اللي كانت
+  //   بتسبب مشكلة إعادة ترتيب العناصر السابقة
+  const [futureRangeEnd, setFutureRangeEnd] = useState(() => addDaysStr(todayStr(), FUTURE_HORIZON_STEP_DAYS))
+
+  // ← الأوضاع "المفتوحة" (بلا نهاية) — none و all بس، والباجيناشن فيهم
+  //   بتوسّع الأفق تلقائيًا بدل ما توقف عند صفحة معيّنة
+  const isOpenEnded = dateFilterMode === 'none' || dateFilterMode === 'all'
+
+  // ═══════════════════════════════════════════════════════════
+  // المرحلة الأولى: فلترة على مستوى الحلقة (session) فقط — قبل أي توليد
+  // كل الفلاتر هنا (حالة/معلم/مشرف/يوم/رقم حلقة/مميزة/طالب) بتشتغل مع بعضها
+  // ═══════════════════════════════════════════════════════════
+const phase1Sessions = useMemo(() => {
+  const result = liveSessions.filter(s => (
+    (!search || s.studentName.toLowerCase()?.includes(search?.toLowerCase()) || String(s.sessionNumber.toLowerCase())?.includes(search.toLowerCase())) &&
+    (!filterSessionNumber || String(s.sessionNumber).toLowerCase().includes(filterSessionNumber.trim().toLowerCase())) &&
+    (filterStatus.includes('all') || filterStatus.includes(s.status)) &&
+    (filterTeacher.includes('all') || filterTeacher.includes(s.teacherId)) &&
+    // ← فلتر المشرف اتشال من هنا خالص، هيتطبّق بعدين على مستوى الحصة نفسها
+    (!filterStudentId || s.id === filterStudentId) &&
+    matchesDay(s, filterDay) &&
+    (!flaggedOnly || s.flagged)
+  ))
+
+  if (!filterDay.includes('all')) {
+    result.sort((a, b) => {
+      const aMatch = matchesDay(a, filterDay) ? 0 : 1
+      const bMatch = matchesDay(b, filterDay) ? 0 : 1
+      return aMatch - bMatch
+    })
   }
 
-  return liveSessions
-    .map((s) => {
-      const matchedEntries = (s.history || []).filter(
-        (d) => isInDateRange(d.date, filterDateFrom, filterDateTo)
-      );
-      if (matchedEntries.length === 0) return null;
+  return result
+}, [liveSessions, search, filterStatus, filterTeacher, filterDay, filterSessionNumber, flaggedOnly, filterStudentId])
+  // ← الجدول دايمًا معروض على مستوى الحصص (occurrences)، فوق نتيجة المرحلة الأولى كاملة
+  const occurrenceSourceSessions = phase1Sessions
 
-      // ← آخر حالة وصلت ضمن الفترة المختارة (أحدث تاريخ بين النتائج المطابقة)
-      const latestEntry = matchedEntries.reduce(
-        (a, b) => (new Date(a.date) > new Date(b.date) ? a : b)
-      );
+  // ═══════════════════════════════════════════════════════════
+  // نطاق التوليد: شهر / يوم / فترة / أو (none/all) بيتحسبوا خاص جوه generatedOccurrences
+  // فلتر الطالب مبقاش بيوقف فلتر التاريخ — الاتنين بيشتغلوا مع بعض
+  // ═══════════════════════════════════════════════════════════
+  const occurrenceRangeOptions = useMemo(() => {
+  let base
+  if (dateFilterMode === 'month')      base = monthRange(filterMonthYear)
+  else if (dateFilterMode === 'day')   base = dayRange(filterSingleDate)
+  else if (dateFilterMode === 'range') base = { rangeStart: filterDateFrom || undefined, rangeEnd: filterDateTo || undefined }
+  else base = {}
 
-      return {
-        ...s,
-        status: latestEntry.status, // ← الحالة خلال الفترة المختارة
-      };
-    }).filter(Boolean);
-},[liveSessions, filterDateFrom, filterDateTo]);
+  return base   // ← مبقاش فيها dayNumber خالص، الفلترة بالأيام بقت بعد التوليد
+}, [dateFilterMode, filterMonthYear, filterSingleDate, filterDateFrom, filterDateTo])
+  // ═══════════════════════════════════════════════════════════
+  // توليد الحصص + فلتر حالة الحصة + ترتيب (بالتاريخ ثم الوقت) — sort لذيذ ومرتب دايمًا
+  // ═══════════════════════════════════════════════════════════
+const generatedOccurrences = useMemo(() => {
+  let list
 
-// ← فلتر يوم محدد بالتاريخ الكامل (مش يوم أسبوع)
-const sessionsMatchesSingleDate = useMemo(() => {
-  if (!filterSingleDate) return liveSessions;
+  if (dateFilterMode === 'all') {
+    const past = generateOccurrences(occurrenceSourceSessions, occurrences, {
+      rangeStart: undefined,
+      rangeEnd: todayStr(),
+    })
+    const future = generateOccurrences(occurrenceSourceSessions, occurrences, {
+      rangeStart: todayStr(),
+      rangeEnd: futureRangeEnd,
+    }).filter(o => o.date > todayStr())
 
-  if (isFutureDateStr(filterSingleDate)) {
-    // ← تاريخ مستقبلي: نطابق على يوم الأسبوع بتاعه + نشط فقط
-    const dayName = getDayNameFromDateStr(filterSingleDate)
-    return liveSessions.filter(s => s.status === 'active' && matchesDay(s, dayName))
+    list = [...past, ...future]
+  } else if (dateFilterMode === 'none') {
+    list = generateOccurrences(occurrenceSourceSessions, occurrences, {
+      rangeStart: todayStr(),
+      rangeEnd: futureRangeEnd,
+    })
+  } else {
+    list = generateOccurrences(occurrenceSourceSessions, occurrences, occurrenceRangeOptions)
   }
 
-  // ← تاريخ في الماضي (أو النهاردة): نفس منطق البحث في الـ history
-  return liveSessions
-    .map((s) => {
-      const matchedEntries = (s.history || []).filter(
-        (d) => isInDateRange(d.date, filterSingleDate, filterSingleDate)
-      );
-      if (matchedEntries.length === 0) return null;
+  return list
+    .filter(o => filterOccStatus === 'all' || o.status === filterOccStatus)
+    .filter(o => filterDay.includes('all') || filterDay.includes(getDayNameFromDateStr(o.date)))
+    // ← جديد: فلتر المشرف بقى على مستوى الحصة نفسها (المشرف الظاهر فعليًا في عمودها)
+    .filter(o => filterSupervisor.includes('all') || filterSupervisor.includes(o.supervisorId))
+    .sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1
+      return (a.time || '').localeCompare(b.time || '')
+    })
+}, [occurrenceSourceSessions, occurrences, occurrenceRangeOptions, filterOccStatus, filterDay, filterSupervisor, dateFilterMode, futureRangeEnd])
+const activeList = generatedOccurrences;
 
-      const latestEntry = matchedEntries.reduce(
-        (a, b) => (new Date(a.date) > new Date(b.date) ? a : b)
-      );
-
-      return { ...s, status: latestEntry.status };
-    }).filter(Boolean);
-}, [liveSessions, filterSingleDate]);
-
-// ← فلتر الشهر/السنة (رجّعناه زي ما كان في الكود الأصلي)
-const sessionsMatchesMonthYear = useMemo(() => {
-  if (!filterMonthYear) return liveSessions;
-
-  if (isFutureMonthYear(filterMonthYear)) {
-    // ← شهر مستقبلي بالكامل: نعرض النشطين فقط
-    return liveSessions.filter(s => s.status === 'active')
-  }
-
-  return liveSessions
-    .map((s) => {
-      const matchedEntry = s.history?.find(
-        (d) => toMonthYear(d.date) === filterMonthYear
-      );
-      if (!matchedEntry) return null;
-
-      return {
-        ...s,
-        status: matchedEntry.status, // ← الحالة وقت الشهر المختار
-      };
-    }).filter(Boolean);
-},[liveSessions, filterMonthYear]);
-
-  // ── Filters ── (كلها client-side على liveSessions / allSessions) ──
-  const filtered = useMemo(() => {
-    const dateBase =
-      dateFilterMode === 'range' ? sessionsMatchesDateRange :
-      dateFilterMode === 'day'   ? sessionsMatchesSingleDate :
-      dateFilterMode === 'month' ? sessionsMatchesMonthYear :
-      liveSessions
-
-    const result = dateBase.filter(s => (
-      (!search || s.studentName.toLowerCase()?.includes(search.toLowerCase()) || String(s.sessionNumber.toLowerCase())?.includes(search.toLowerCase())) &&
-      (!filterSessionNumber || String(s.sessionNumber).toLowerCase().includes(filterSessionNumber.trim().toLowerCase())) &&
-      (filterStatus.includes('all') || filterStatus.includes(s.status)) &&
-      (filterTeacher    === 'all' || s.teacherId    === filterTeacher) &&
-      (filterSupervisor === 'all' || s.supervisorId === filterSupervisor) &&
-      matchesDay(s, filterDay) &&
-      (!flaggedOnly || s.flagged)
-    ))
-
-    if (filterDay !== 'all') {
-      result.sort((a, b) => {
-        const aMatch = matchesDay(a, filterDay) ? 0 : 1
-        const bMatch = matchesDay(b, filterDay) ? 0 : 1
-        return aMatch - bMatch
-      })
-    }
-
-    return result
+useEffect(() => {
+    setPage(1)
+    setFutureRangeEnd(addDaysStr(todayStr(), FUTURE_HORIZON_STEP_DAYS))
   }, [
-    liveSessions, dateFilterMode,
-    sessionsMatchesDateRange, sessionsMatchesSingleDate, sessionsMatchesMonthYear,
-    search, filterStatus, filterTeacher, filterSupervisor, filterDay, filterSessionNumber, flaggedOnly
-  ])
-
-  // ← كل ما الفلاتر أو البحث يتغيروا، رجّع لأول صفحة
-  useEffect(() => { setPage(1) }, [
     search, filterStatus, filterTeacher, filterSupervisor, filterDay,
     dateFilterMode, filterDateFrom, filterDateTo, filterSingleDate, filterMonthYear,
-    filterSessionNumber, flaggedOnly
+    filterSessionNumber, flaggedOnly, filterOccStatus, filterStudentId
   ])
 
-  const totalFiltered = filtered.length
+  // ← لما تختار طالب لأول مرة وفلتر التاريخ لسه على الوضع الافتراضي،
+  //   بنحوّله تلقائيًا لـ "كل السجل" عشان تشوف كل حصصه مش من النهارده وطالع بس
+  useEffect(() => {
+    if (filterStudentId && dateFilterMode === 'none') {
+      setDateFilterMode('all')
+    }
+  }, [filterStudentId])
+
+  const totalFiltered = activeList.length
   const totalPages    = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE))
   const safePage       = Math.min(page, totalPages)
   const paginated      = useMemo(
-    () => filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
-    [filtered, safePage]
+    () => activeList.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [activeList, safePage]
   )
 
-  const goNextPage = () => setPage(p => Math.min(p + 1, totalPages))
+
+  const pendingPostponeRequests = useMemo(
+  () => postponeRequests.filter(r => r.status === 'pending'),
+  [postponeRequests]
+)
+  // ← حساب عدد النتائج المفلترة النهائي لمدى مستقبل معيّن (past+future أو future بس
+  //   حسب الوضع)، بنفس منطق generatedOccurrences بالظبط — تُستخدم في goNextPage
+  //   عشان نتأكد إن التوسيع كافي قبل ما نوقف
+const computeTotalForFutureEnd = (candidateEnd) => {
+  let list
+  if (dateFilterMode === 'all') {
+    const past = generateOccurrences(occurrenceSourceSessions, occurrences, {
+      rangeStart: undefined, rangeEnd: todayStr(),
+    })
+    const future = generateOccurrences(occurrenceSourceSessions, occurrences, {
+      rangeStart: todayStr(), rangeEnd: candidateEnd,
+    }).filter(o => o.date > todayStr())
+    list = [...past, ...future]
+  } else {
+    list = generateOccurrences(occurrenceSourceSessions, occurrences, {
+      rangeStart: todayStr(), rangeEnd: candidateEnd,
+    })
+  }
+  return list
+    .filter(o => filterOccStatus === 'all' || o.status === filterOccStatus)
+    .filter(o => filterDay.includes('all') || filterDay.includes(getDayNameFromDateStr(o.date)))
+    .filter(o => filterSupervisor.includes('all') || filterSupervisor.includes(o.supervisorId))  // ← جديد
+    .length
+}
+
+  const goNextPage = () => {
+    if (isOpenEnded && safePage >= totalPages) {
+      // ← لازم يبقى فيه على الأقل عنصر واحد يظهر في الصفحة الجايه قبل ما نوقف التوسيع
+      const requiredCount = safePage * PAGE_SIZE + 1
+
+      let end = futureRangeEnd
+      let attempts = 0
+      let newTotal = totalFiltered
+
+      while (newTotal < requiredCount && attempts < 12) {
+        end = addDaysStr(end, FUTURE_HORIZON_STEP_DAYS)
+        newTotal = computeTotalForFutureEnd(end)
+        attempts++
+      }
+      setFutureRangeEnd(end)
+    }
+    setPage(p => p + 1)
+  }
   const goPrevPage = () => setPage(p => Math.max(p - 1, 1))
+
+  // ── تغيير حالة حصة واحدة (occurrence) — إلغاء/غياب/تأجيل/تعويض/تأكيد يدوي ──
+const handleOccurrenceStatusChange = async (occ, newStatus) => {
+  const parentSession = liveSessions.find(s => s.id === occ.sessionId)
+  const patch = { status: newStatus }
+  if (newStatus !== 'makeup') {
+    patch.makeupDate = null
+    patch.makeup = null   // ← جديد: امسح ميعاد التعويض بالكامل، مش بس التاريخ
+  }
+
+  await upsertOccurrenceLocal(occ.sessionId, occ.date, patch, {
+    studentName:    occ.studentName    || parentSession?.studentName,
+    studentPhone:   occ.studentPhone   || parentSession?.studentPhone,
+    teacherName:    occ.teacherName    || parentSession?.teacherName,
+    supervisorId:   occ.supervisorId   || parentSession?.supervisorId,
+    supervisorName: occ.supervisorName || parentSession?.supervisorName,
+    time:           occ.time,
+  })
+}
+  const handleOccurrenceMakeupDateChange = async (occ, newMakeupDate) => {
+    await upsertOccurrenceLocal(occ.sessionId, occ.date, { status: 'makeup', makeupDate: newMakeupDate })
+  }
 
   // ── CRUD ──
   const openAdd = () => { setEditItem(null); setForm(EMPTY_FORM); setModalOpen(true) }
@@ -478,10 +533,8 @@ const sessionsMatchesMonthYear = useMemo(() => {
     setSaving(true)
     const teacher = teachers.find(t => t.id === form.teacherId)
     if (editItem) {
-      // ← تعديل: قراءة واحدة فقط بعد الكتابة، بدون إعادة جلب كل الحلقات
       await updateSessionLocal(editItem.id, { ...form, makeup: editItem.makeup }, teacher?.name || '')
     } else {
-      // ← إضافة: قراءة واحدة فقط بعد الكتابة، بدون إعادة جلب كل الحلقات
       await addSessionLocal(form, teacher?.name || '')
     }
     setModalOpen(false)
@@ -492,14 +545,32 @@ const sessionsMatchesMonthYear = useMemo(() => {
 
   const handleDeleteSession  = async (id) => { await deleteSessionLocal(id);         setConfirm(null) }
   const handleToggleFlag     = async (id) => { await toggleFlagLocal(id) }
-  const handleClearMakeup    = async (id) => { await updateMakeupLocal(id, null);    setConfirm(null) }
-
+const handleClearMakeup = async (occ) => {
+  await upsertOccurrenceLocal(occ.sessionId, occ.date, {
+    status: 'postponed', // ← ترجع لحالة "طلب تعويض" بدل ما تختفي خالص؛ غيّرها لـ 'pending' لو تفضّل كده
+    makeup: null,
+    makeupDate: null,
+  })
+  setConfirm(null)
+}
   // ── Makeup ──
-  const openMakeup = (s) => {
-    setMakeupSession(s)
-    setMakeupForm({ day:'', date:'', studentTime:'', teacherTime:'', timezone:'Africa/Cairo' })
-    setMakeupModal(true)
-  }
+
+const openMakeup = (occ) => {
+  setMakeupOccurrence(occ)
+  // ← نسيب makeupSession للتوافق مع باقي استخدامات المودال (اسم الطالب/رقم الحلقة للعرض بس)
+  setMakeupSession({
+    id: occ.sessionId,
+    studentName: occ.studentName,
+    sessionNumber: occ.sessionNumber,
+    makeup: occ.makeup,
+  })
+  setMakeupForm(
+    occ.makeup
+      ? { ...occ.makeup }
+      : { day:'', date:'', studentTime:'', teacherTime:'', timezone:'Africa/Cairo' }
+  )
+  setMakeupModal(true)
+}
 
   const updateMakeupField = (field, value) => {
     setMakeupForm(p => {
@@ -516,7 +587,33 @@ const sessionsMatchesMonthYear = useMemo(() => {
 
  // ← تحديث التعويض محليًا بدون إعادة جلب كل الحلقات
 const saveMakeup = async () => {
-  await updateMakeupLocal(makeupSession.id, { ...makeupForm, confirmed: true })
+  const makeupData = { ...makeupForm, confirmed: true }
+
+  // ← لو شيفت التعويض مختلف عن الشيفت الأصلي، هات مشرف الشيفت الجديد
+  const makeupShift = getShiftForTime(makeupForm.studentTime)
+  const shiftSupervisors = supervisors.filter(s => s.shift === makeupShift && s.status === 'active')
+  const newSupervisor = shiftSupervisors[0] // أو أي منطق round-robin/الأقل عددًا هنا
+
+  if (newSupervisor) {
+    makeupData.supervisorId   = newSupervisor.id
+    makeupData.supervisorName = newSupervisor.name
+  }
+
+  if (makeupOccurrence) {
+    await upsertOccurrenceLocal(makeupOccurrence.sessionId, makeupOccurrence.date, {
+      status: 'makeup',
+      makeup: makeupData,
+      makeupDate: makeupForm.date,
+      // ← نحدّث المشرف على مستوى الحصة نفسها كمان عشان يظهر في عمود "المشرف"
+      supervisorId:   newSupervisor?.id   || undefined,
+      supervisorName: newSupervisor?.name || undefined,
+    })
+  }
+
+
+  // ← نسخة على مستوى الحلقة برضو، لأن reminderJob.js لسه بيقرا session.makeup.confirmed
+  //   عشان يبعت تذكير الواتساب بميعاد التعويض — من غيرها مش هيتبعتله تذكير
+  await updateMakeupLocal(makeupSession.id, makeupData)
 
   if (postponeResolving) {
     await resolvePostpone(postponeResolving, makeupForm.date, makeupForm.studentTime)
@@ -524,28 +621,22 @@ const saveMakeup = async () => {
   }
 
   setMakeupModal(false)
+  setMakeupOccurrence(null)
 }
   const formValid = !!(form.name?.trim() && form.teacherId && (
     form.status === 'trial'  ? form.trialDate && form.trialTime :
     form.status === 'active' ? form.regularDates?.some(d => d.day && d.time) : true
   ))
 
-  const hasActiveFilters = !filterStatus.includes('all') || filterTeacher !== 'all' || filterSupervisor !== 'all' || filterDay !== 'all' || dateFilterMode !== 'none' || !!filterSessionNumber
-  const clearFilters = () => {
-    setFilterStatus(['all']); setFilterTeacher('all'); setFilterSupervisor('all')
-    setFilterDay('all'); setFilterSessionNumber('')
-    setDateFilterMode('none'); setFilterDateFrom(''); setFilterDateTo(''); setFilterSingleDate(''); setFilterMonthYear('')
-  }
+ const hasActiveFilters = !filterStatus.includes('all') || !filterTeacher.includes('all') || !filterSupervisor.includes('all') ||
+  !filterDay.includes('all') || dateFilterMode !== 'none' || !!filterSessionNumber || filterOccStatus !== 'all' || !!filterStudentId
 
-  // ← هل في فلتر تاريخ (فترة/يوم/شهر) شغّال دلوقتي؟ (مستخدم لإخفاء عمود المشرف زي الأصل)
-  const isDateFilterActive = dateFilterMode !== 'none'
-
-  // ← هل الفلتر المختار (أي ما كان نوعه) بيشاور على فترة/يوم/شهر في المستقبل؟ (لعرض تنبيه بسيط في الواجهة)
-  const dateFilterIsFuture =
-    dateFilterMode === 'day'   ? isFutureDateStr(filterSingleDate) :
-    dateFilterMode === 'month' ? isFutureMonthYear(filterMonthYear) :
-    dateFilterMode === 'range' ? isFutureDateStr(filterDateFrom || filterDateTo) :
-    false
+const clearFilters = () => {
+  setFilterStatus(['all']); setFilterTeacher(['all']); setFilterSupervisor(['all'])
+  setFilterDay(['all']); setFilterSessionNumber('')
+  setDateFilterMode('none'); setFilterDateFrom(''); setFilterDateTo(''); setFilterSingleDate(''); setFilterMonthYear('')
+  setFilterOccStatus('all'); setFilterStudentId('')
+}
 
   if (allSessionsLoading && allSessions.length === 0) return (
     <div className="flex items-center justify-center py-20 text-gray-400">
@@ -562,7 +653,7 @@ const saveMakeup = async () => {
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">إدارة الحلقات</h1>
-          <p className="text-sm text-slate-500 mt-0.5">عرض وتتبع جميع الحلقات الأكاديمية</p>
+          <p className="text-sm text-slate-500 mt-0.5">عرض وتتبع جميع الحصص — من النهارده وطالع افتراضيًا</p>
         </div>
         <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm shadow-sm">
           <Calendar size={15} className="text-teal-500"/>
@@ -620,20 +711,21 @@ const saveMakeup = async () => {
             { value:'cancelled', label:'ملغي' },
           ]}/>
 
-          <FilterSelect value={filterTeacher} onChange={setFilterTeacher} options={[
-            { value:'all', label:'كل المعلمين' },
-            ...teachers.filter(t => !t.isDeleted).map(t => ({ value: t.id, label: t.name.replace('الشيخ ','') }))
-          ]}/>
 
-          <FilterSelect value={filterSupervisor} onChange={setFilterSupervisor} options={[
-            { value:'all', label:'كل المشرفين' },
-            ...supervisors.filter(s => !s.isDeleted).map(s => ({ value: s.id, label: s.name }))
-          ]}/>
+          <MultiFilterSelect value={filterTeacher} onChange={setFilterTeacher} label="كل المعلمين" options={[
+              { value:'all', label:'كل المعلمين' },
+              ...teachers.filter(t => !t.isDeleted).map(t => ({ value: t.id, label: t.name.replace('الشيخ ','') }))
+            ]}/>
 
-          <FilterSelect value={filterDay} onChange={setFilterDay} options={[
-            { value:'all', label:'كل الأيام' },
-            ...DAYS_AR.map(d => ({ value:d, label:d }))
-          ]}/>
+            <MultiFilterSelect value={filterSupervisor} onChange={setFilterSupervisor} label="كل المشرفين" options={[
+              { value:'all', label:'كل المشرفين' },
+              ...supervisors.filter(s => !s.isDeleted).map(s => ({ value: s.id, label: s.name }))
+            ]}/>
+
+            <MultiFilterSelect value={filterDay} onChange={setFilterDay} label="كل الأيام" options={[
+              { value:'all', label:'كل الأيام' },
+              ...DAYS_AR.map(d => ({ value:d, label:d }))
+            ]}/>
 
           {/* فلتر رقم الحلقة */}
           <input
@@ -644,18 +736,26 @@ const saveMakeup = async () => {
             className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm hover:border-slate-300 transition-all w-28"
           />
 
-          {/* فاصل بسيط قبل فلاتر التاريخ */}
+          {/* فاصل بسيط قبل فلاتر الحصص/التاريخ */}
           <div className="w-px h-6 bg-slate-200"/>
 
-          {/* نوع فلتر التاريخ: بدون / فترة / يوم محدد / شهر محدد */}
-          <FilterSelect value={dateFilterMode} onChange={(v) => setDateFilterMode(v)} options={[
-            { value:'none',  label:'بدون فلتر تاريخ' },
-            { value:'range', label:'فترة (من - إلى)' },
-            { value:'day',   label:'يوم محدد' },
-            { value:'month', label:'شهر محدد' },
+          {/* ← فلتر الطالب — بيشتغل مع باقي الفلاتر (حالة/معلم/مشرف/يوم/تاريخ) مش بدالًا عنها */}
+          <FilterSelect value={filterStudentId} onChange={setFilterStudentId} options={[
+            { value:'', label:'بدون فلتر طالب' },
+            ...liveSessions.map(s => ({ value: s.id, label: `${s.studentName} — #${s.sessionNumber}` }))
           ]}/>
 
-          {/* فلتر الفترة (من - إلى) — بيتقارن مع تاريخ حالة كل حلقة ضمن history، ولو الفترة مستقبلية بيعرض النشطين فقط */}
+          {/* نوع فلتر التاريخ على مستوى الحصص (occurrences) — شغّال دايمًا، مع أو بدون فلتر طالب.
+              'بدون فلتر تاريخ' هنا معناها: من النهارده وطالع (الوضع الافتراضي) */}
+           <FilterSelect value={dateFilterMode} onChange={(v) => setDateFilterMode(v)} options={[
+          { value:'none',  label:'من النهارده وطالع' },
+          { value:'all',   label:'كل السجل (كل التواريخ)' },
+          { value:'range', label:'فترة (من - إلى)' },
+          { value:'day',   label:'يوم محدد' },
+          { value:'month', label:'شهر محدد' },
+        ]}/>
+
+          {/* فلتر الفترة (من - إلى) — بيولّد حصص كل الأيام الواقعة فيها */}
           {dateFilterMode === 'range' && (
             <div className="flex items-center gap-1.5">
               <input
@@ -676,7 +776,7 @@ const saveMakeup = async () => {
             </div>
           )}
 
-          {/* فلتر يوم محدد بتاريخه الكامل — لو مستقبلي بيطابق على يوم الأسبوع بتاعه ويعرض النشطين بس */}
+          {/* فلتر يوم محدد بتاريخه الكامل — بيولّد حصة واحدة بس لهذا التاريخ لو الحلقة بتاعت هذا اليوم */}
           {dateFilterMode === 'day' && (
             <input
               type="date"
@@ -686,7 +786,7 @@ const saveMakeup = async () => {
             />
           )}
 
-          {/* فلتر الشهر/السنة — لو مستقبلي بيعرض النشطين فقط بدون تقييد بيوم أسبوع */}
+          {/* فلتر الشهر/السنة — بيولّد كل حصص هذا الشهر */}
           {dateFilterMode === 'month' && (
             <input
               type="month"
@@ -701,12 +801,11 @@ const saveMakeup = async () => {
             />
           )}
 
-          {/* تنبيه بسيط لما الفلتر المختار يكون لفترة/يوم/شهر مستقبلي */}
-          {dateFilterIsFuture && (
-            <span className="flex items-center gap-1 text-[11px] text-indigo-600 bg-indigo-50 border border-indigo-100 px-2.5 py-1.5 rounded-lg font-medium whitespace-nowrap">
-              📌 فترة مستقبلية — يعرض النشطين فقط
-            </span>
-          )}
+          {/* فلتر حالة الحصة (occurrence-level) */}
+          <FilterSelect value={filterOccStatus} onChange={setFilterOccStatus} options={[
+            { value:'all', label:'كل حالات الحصة' },
+            ...Object.entries(OCCURRENCE_STATUS_LABELS).map(([value, label]) => ({ value, label }))
+          ]}/>
 
           <button onClick={() => setFlaggedOnly(p => !p)}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${
@@ -722,14 +821,16 @@ const saveMakeup = async () => {
             </button>
           )}
 
-          <div className="mr-auto text-xs text-slate-400 font-medium">{filtered.length} حلقة</div>
+          <div className="mr-auto text-xs text-slate-400 font-medium">
+            {activeList.length} حصة
+          </div>
         </div>
       </div>
 
 {/* طلبات التأجيل */}
 {showPostpone && (
   <div className="bg-white rounded-2xl border border-orange-100 shadow-sm overflow-hidden">
-    {postponeRequests.length === 0 ? (
+    {pendingPostponeRequests.length === 0 ? (
       <div className="p-12 text-center">
         <div className="w-14 h-14 rounded-2xl bg-orange-50 flex items-center justify-center mx-auto mb-4">
           <Clock size={24} className="text-orange-400"/>
@@ -747,7 +848,7 @@ const saveMakeup = async () => {
           </tr>
         </thead>
         <tbody className="divide-y divide-orange-50">
-          {postponeRequests.map(r => (
+          {pendingPostponeRequests.map(r => (
             <tr key={r.id} className="hover:bg-orange-50/30 transition-colors">
               <td className="px-4 py-3.5">
                 <div className="flex items-center gap-2.5">
@@ -781,22 +882,20 @@ const saveMakeup = async () => {
               </td>
               <td className="px-4 py-3.5">
                 {r.status === 'pending' ? (
-                <button
-  onClick={() => {
-    const session = liveSessions.find(s => s.id === r.sessionId)
-    setMakeupSession(session || {
-      id:            r.sessionId,
-      studentName:   r.studentName,
-      sessionNumber: '—',
-      makeup:        null,
-    })
-    setMakeupForm({ day:'', date:'', studentTime:'', teacherTime:'', timezone:'Africa/Cairo' })
-    setMakeupModal(true)
-    setPostponeResolving(r.id)
-  }}
-  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
-  <Plus size={12}/> تحديد تعويض
-</button>
+                  <button
+                    onClick={() => {
+                      openMakeup({
+                        sessionId: r.sessionId,
+                        date: r.originalDate,
+                        studentName: r.studentName,
+                        sessionNumber: liveSessions.find(s => s.id === r.sessionId)?.sessionNumber || '—',
+                        makeup: null,
+                      })
+                      setPostponeResolving(r.id)
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
+                    <Plus size={12}/> تحديد تعويض
+                  </button>
                 ) : (
                   <span className="text-slate-300 text-xs">—</span>
                 )}
@@ -809,13 +908,13 @@ const saveMakeup = async () => {
   </div>
 )}
 
-      {/* Table */}
+      {/* Table — دايمًا على مستوى الحصص (occurrences)، مرتبة بالتاريخ ثم الوقت */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-100">
-                {['رقم الحلقة','الموعد','الطالب','البلد','المعلم', !isDateFilterActive && 'المشرف','الحالة','التعويض','إجراء'].map(h => (
+                {["#",'التاريخ','اليوم','رقم الحلقة','الطالب','المعلم','المشرف','حالة الحصة','تعويض','إجراء'].map(h => (
                   <th key={h} className="px-4 py-3.5 text-right text-xs font-semibold text-slate-500 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -825,152 +924,146 @@ const saveMakeup = async () => {
                 <tr><td colSpan={9} className="px-5 py-16 text-center text-slate-400 text-sm">
                   <div className="flex flex-col items-center gap-2">
                     <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-2xl">🔍</div>
-                    <span>لا توجد حلقات مطابقة</span>
+                    <span>لا توجد حصص مطابقة</span>
                   </div>
                 </td></tr>
               )}
-              {paginated.map(s => {
-                const dateDisplay = s.status === 'trial' ? s.trialDate : filterDay !== 'all' ? filterDay : `${s.regularDates?.[0]?.day?? 'غير محدد'} - ${(s.regularDates?.[1]?.day)?? 'غير محدد' }` || '—'
-                const timeDisplay =  s.status === 'trial' ? s.trialTime : filterDay !== 'all'? s.regularDates?.find((d)=> d.day === filterDay).time : `${s.regularDates?.[0]?.time?? 'غير محدد'} - ${s.regularDates?.[1]?.time?? 'غير محدد'}` || ''
-                const isToday     = s.trialDate === todayStr()
-
+              {paginated.map(o => {
+                const parentSession = liveSessions.find(s => s.id === o.sessionId)
                 return (
-                  <tr key={s.id} className={`transition-colors ${s.flagged ? 'bg-amber-50/40 hover:bg-amber-50/70' : 'hover:bg-slate-50/60'}`}>
-
-                    {/* رقم الحلقة */}
-                    <td className="px-4 py-3.5">
-                      <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">
-                        #{s.sessionNumber}
-                      </span>
-                    </td>
-
-                    <td className="px-4 py-3.5">
-                      <div className="flex flex-col gap-0.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs text-slate-700 font-mono">{dateDisplay}</span>
-                        </div>
-                        {timeDisplay && <span className="text-xs text-slate-500 font-mono">{timeDisplay}</span>}
+                <tr key={o.id} className={`transition-colors ${o.flagged ? 'bg-amber-50/40 hover:bg-amber-50/70' : 'hover:bg-slate-50/60'}`}>
+                  <td className="px-4 py-3.5">
+                    <span className="text-xs font-mono bg-teal-50 text-teal-700 px-2 py-1 rounded-lg font-semibold">
+                      s{o.occurrenceNumber ?? '—'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3.5">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs text-slate-700 font-mono">{o.date}</span>
+                      {o.time && <span className="text-xs text-slate-500 font-mono">{o.time}</span>}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3.5 text-xs text-slate-500 whitespace-nowrap">{getDayNameFromDateStr(o.date) || '—'}</td>
+                  <td className="px-4 py-3.5">
+                    <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">#{o.sessionNumber}</span>
+                  </td>
+                  <td className="px-4 py-3.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-teal-50 flex items-center justify-center text-sm font-bold text-teal-700 flex-shrink-0">
+                        {o.studentName?.charAt(0) || '؟'}
                       </div>
-                    </td>
-
-                    {/* الطالب */}
-                    <td className="px-4 py-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-xl bg-teal-50 flex items-center justify-center text-sm font-bold text-teal-700 flex-shrink-0">
-                          {s.studentName?.charAt(0) || '؟'}
-                        </div>
-                        <div>
-                          <div className="font-medium text-slate-800 text-sm whitespace-nowrap">{s.studentName || '—'}</div>
-                          {s.studentPhone && <div className="text-xs text-slate-400 font-mono">{s.studentPhone}</div>}
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* البلد */}
-                    <td className="px-4 py-3.5 text-xs text-slate-500">{s.country || '—'}</td>
-
-                    {/* المعلم */}
-                    <td className="px-4 py-3.5 text-sm text-slate-600 whitespace-nowrap">
-                      {s.teacherName?.replace('الشيخ ','') || '—'}
-                    </td>
-
-                    {/* المشرف */}
-                    
-                    <td className="px-4 py-3.5">
-                      {!isDateFilterActive &&(
-                      s.supervisorName ? (
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-6 h-6 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
-                            <User size={12} className="text-indigo-500"/>
-                          </div>
-                          <span className="text-sm text-slate-600 whitespace-nowrap">{s.supervisorName}</span>
-                        </div>
-                      ) : <span className="text-slate-300 text-sm">—</span>)
-              }
-                    </td>
-
-                    {/* الحالة */}
-                    <td className="px-4 py-3.5">
-                      <span className={`text-xs border px-2.5 py-1 rounded-lg font-semibold ${SESSION_STATUS_STYLE[s.status] || 'bg-slate-50 text-slate-500 border-slate-200'}`}>
-                        {STATUS_LABELS[s.status] || s.status}
-                      </span>
-                    </td>
-
-                    {/* التعويض */}
-                    <td className="px-4 py-3.5 min-w-[140px]">
-                      <MakeupCell session={s} onOpen={openMakeup}
-                        onClearRequest={(id) => setConfirm({ id, type: 'makeup' })}/>
-                    </td>
-
-                    {/* الإجراء */}
-                    <td className="px-4 py-3.5">
+                      <span className="font-medium text-slate-800 text-sm whitespace-nowrap">{o.studentName || '—'}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3.5 text-sm text-slate-600 whitespace-nowrap">{o.teacherName?.replace('الشيخ ','') || '—'}</td>
+                  <td className="px-4 py-3.5">
+                    {o.supervisorName ? (
                       <div className="flex items-center gap-1.5">
-                        <button onClick={() => handleToggleFlag(s.id)}
-                          className={`p-1.5 rounded-lg transition-all ${s.flagged ? 'text-amber-500 bg-amber-50' : 'text-slate-300 hover:text-amber-400 hover:bg-amber-50'}`}>
-                          <Star size={14} className={s.flagged ? 'fill-amber-400' : ''}/>
-                        </button>
-                        <button onClick={() => openEdit(s)}
-                          className="p-1.5 text-slate-300 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-all">
-                          <Pencil size={14}/>
-                        </button>
-                        <button onClick={() => setConfirm({ id: s.id, type: 'session' })}
-                          className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
-                          <Trash2 size={14}/>
-                        </button>
+                        <div className="w-6 h-6 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                          <User size={12} className="text-indigo-500"/>
+                        </div>
+                        <span className="text-sm text-slate-600 whitespace-nowrap">{o.supervisorName}</span>
                       </div>
-                    </td>
-                  </tr>
-                )
-              })}
+                    ) : <span className="text-slate-300 text-sm">—</span>}
+                  </td>
+                  <td className="px-4 py-3.5">
+                    <select
+                      value={o.status}
+                      onChange={e => handleOccurrenceStatusChange(o, e.target.value)}
+                      className={`text-xs border px-2.5 py-1.5 rounded-lg font-semibold cursor-pointer outline-none ${OCCURRENCE_STATUS_STYLE[o.status] || 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                      {Object.entries(OCCURRENCE_STATUS_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </td>
+                 <td className="px-4 py-3.5">
+                    {parentSession ? (
+                        <MakeupCell
+                          occurrence={o}
+                          onOpen={openMakeup}
+                          onClearRequest={(occ) => setConfirm({ occ, type: 'makeup' })}
+                        />
+                      
+                    ) : (
+                      <span className="text-slate-300 text-xs">—</span>
+                    )}
+                  </td>
+                  {/* الإجراء — على مستوى الحلقة الأصل (تعديل/فلاج/حذف/تعويض) */}
+                  <td className="px-4 py-3.5">
+                    <div className="flex items-center gap-1.5">
+                      {parentSession && (
+                        <>
+                          <button onClick={() => handleToggleFlag(parentSession.id)}
+                            className={`p-1.5 rounded-lg transition-all ${parentSession.flagged ? 'text-amber-500 bg-amber-50' : 'text-slate-300 hover:text-amber-400 hover:bg-amber-50'}`}>
+                            <Star size={14} className={parentSession.flagged ? 'fill-amber-400' : ''}/>
+                          </button>
+                          <button onClick={() => openEdit(parentSession)}
+                            className="p-1.5 text-slate-300 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-all">
+                            <Pencil size={14}/>
+                          </button>
+                          <button onClick={() => setConfirm({ id: parentSession.id, type: 'session' })}
+                            className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
+                            <Trash2 size={14}/>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )})}
             </tbody>
           </table>
         </div>
       </div>
 
- {/* Pagination — client-side بالكامل على نتيجة الفلترة */}
-{totalFiltered > PAGE_SIZE && (
-  <div className="flex items-center justify-between px-2">
+      {/* Pagination — موحّدة لكل الأوضاع. في none/all بتظهر دايمًا وزرار
+          "التالي" بلا نهاية (بيوسّع الأفق تلقائيًا)؛ في range/day/month
+          بتظهر بس لو النتايج أكتر من صفحة */}
+      {(totalFiltered > PAGE_SIZE || isOpenEnded) && (
+        <div className="flex items-center justify-between px-2">
 
-    {/* معلومات */}
-    <p className="text-xs text-slate-400">
-      يعرض{' '}
-      <span className="font-semibold text-slate-600">
-        {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, totalFiltered)}
-      </span>
-      {' '}من{' '}
-      <span className="font-semibold text-slate-600">{totalFiltered}</span>
-      {' '}حلقة
-    </p>
+          {/* معلومات */}
+          <p className="text-xs text-slate-400">
+            يعرض{' '}
+            <span className="font-semibold text-slate-600">
+              {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, totalFiltered)}
+            </span>
+            {' '}من{' '}
+            <span className="font-semibold text-slate-600">
+              {totalFiltered}{isOpenEnded ? '+' : ''}
+            </span>
+            {' '}حصة
+          </p>
 
-    {/* أزرار */}
-    <div className="flex items-center gap-2">
-      <button
-        onClick={goPrevPage}
-        disabled={safePage <= 1}
-        className="flex items-center gap-1.5 px-4 py-2 text-sm border border-slate-200 rounded-xl bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M9 18l6-6-6-6"/>
-        </svg>
-        السابق
-      </button>
+          {/* أزرار */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={goPrevPage}
+              disabled={safePage <= 1}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm border border-slate-200 rounded-xl bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 18l6-6-6-6"/>
+              </svg>
+              السابق
+            </button>
 
-      {/* رقم الصفحة الحالية بس */}
-      <span className="w-9 h-9 flex items-center justify-center rounded-lg text-sm font-semibold bg-teal-500 text-white shadow-sm">
-        {safePage}
-      </span>
+            {/* رقم الصفحة الحالية بس */}
+            <span className="w-9 h-9 flex items-center justify-center rounded-lg text-sm font-semibold bg-teal-500 text-white shadow-sm">
+              {safePage}
+            </span>
 
-      <button
-        onClick={goNextPage}
-        disabled={safePage >= totalPages}
-        className="flex items-center gap-1.5 px-4 py-2 text-sm border border-slate-200 rounded-xl bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm">
-        التالي
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M15 18l-6-6 6-6"/>
-        </svg>
-      </button>
-    </div>
-  </div>
-)}
+            <button
+              onClick={goNextPage}
+              disabled={isOpenEnded ? false : safePage >= totalPages}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm border border-slate-200 rounded-xl bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm">
+              التالي
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M15 18l-6-6 6-6"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Modal إضافة/تعديل */}
       {modalOpen && (
@@ -1032,7 +1125,7 @@ const saveMakeup = async () => {
       {confirm && (
         <ConfirmDialog
           message={confirm.type === 'makeup' ? 'هل تريد حذف ميعاد التعويض؟' : 'هل تريد حذف هذه الحلقة نهائياً؟'}
-          onConfirm={() => confirm.type === 'makeup' ? handleClearMakeup(confirm.id) : handleDeleteSession(confirm.id)}
+          onConfirm={() => confirm.type === 'makeup' ? handleClearMakeup(confirm.occ) : handleDeleteSession(confirm.id)}
           onCancel={() => setConfirm(null)}
         />
       )}

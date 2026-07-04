@@ -4,6 +4,7 @@ import {
   updatePassword,
   EmailAuthProvider,
   reauthenticateWithCredential,
+  sendPasswordResetEmail
 } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "../../firebase";
@@ -66,4 +67,9 @@ export async function changePassword(currentPassword, newPassword) {
   await reauthenticateWithCredential(user, credential);
 
   await updatePassword(user, newPassword);
+}
+
+export async function forgotPassword(email) {
+  auth.languageCode = "ar";
+  await sendPasswordResetEmail(auth, email);
 }

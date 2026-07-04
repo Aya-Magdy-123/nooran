@@ -2,9 +2,6 @@ import { useState, useMemo, useEffect } from "react";
 import {
   BookOpen,
   Clock,
-  Users,
-  ChevronDown,
-  ChevronUp,
   Phone,
   CheckCircle,
   XCircle,
@@ -13,16 +10,21 @@ import {
   RefreshCw,
   Pencil,
   X,
-  Save,CalendarClock,
+  Save,
   Plus
 } from "lucide-react";
 import StudentSessionForm from "../../components/ui/StudentSessionForm";
-import { useApp } from "../../context/AppContext"; // ← استبدل BASE بالـ Context
-import MakeupModal from "../../components/ui/MakeupModal"; 
+import { useApp } from "../../context/AppContext";
+import MakeupModal from "../../components/ui/MakeupModal";
 import { createPortal } from "react-dom";
 import { useRef } from "react";
+// ← توليد الحصص (occurrences) ديناميكيًا فوق الحلقات — نفس اللي بتستخدمه AdminSessions
+import { generateOccurrences } from "../../utils/generateOccurrences";
 
-// ─── Status Badge (بدون تغيير) ────────────────────────────────
+// ─── Status Badge ────────────────────────────────
+// ← بقى فيه نوعين من الحالات بيتعرضوا بنفس المكوّن:
+//   1) حالة الحلقة نفسها (session.status): active/trial/paused/cancelled
+//   2) حالة الحصة (occurrence.status): pending/confirmed/absent/postponed/makeup/cancelled
 const StatusBadge = ({ status }) => {
   const config = {
     active: {
@@ -43,22 +45,27 @@ const StatusBadge = ({ status }) => {
     pending: {
       icon: ClockIcon,
       className: "bg-blue-50 text-blue-700 border-blue-200",
-      label: "في الانتظار",
+      label: "قيد الانتظار",
     },
     confirmed: {
       icon: CheckCircle,
       className: "bg-green-50 text-green-700 border-green-200",
-      label: "مؤكد",
+      label: "سيحضر",
     },
-    no_show: {
+    absent: {
       icon: XCircle,
       className: "bg-red-50 text-red-600 border-red-200",
-      label: "غياب",
+      label: "لن يحضر",
     },
     postponed: {
       icon: ClockIcon,
       className: "bg-amber-50 text-amber-700 border-amber-200",
-      label: "طلب تأجيل",
+      label: "طلب تعويض",
+    },
+    makeup: {
+      icon: ClockIcon,
+      className: "bg-purple-50 text-purple-700 border-purple-200",
+      label: "تعويض محدَّد",
     },
     cancelled: {
       icon: XCircle,
@@ -81,20 +88,20 @@ const StatusBadge = ({ status }) => {
   );
 };
 
-// ─── Attendance Status Dropdown (جديد) ─────────────────────────
-// ← بادج حالة الحضور + سهم بيفتح قائمة لتغيير الحالة يدويًا
-const ATTENDANCE_OPTIONS = ["confirmed", "no_show", "postponed", "pending"];
+// ─── Attendance Status Dropdown ─────────────────────────
+// ← بقت شغالة على مستوى الحصة (occurrence) مش الحلقة. أي تغيير هنا بيكتب
+//   على sessionOccurrences عبر upsertOccurrenceLocal، بنفس منطق AdminSessions
+//   تمامًا (بما فيه فتح postponeRequest تلقائي عند اختيار "postponed").
+const ATTENDANCE_OPTIONS = ["confirmed", "absent", "postponed", "pending"];
 
-
-
-function AttendanceStatusDropdown({ session }) {
-  const { updateAttendanceStatus } = useApp();
+function AttendanceStatusDropdown({ occurrence, parentSession }) {
+  const { upsertOccurrenceLocal } = useApp();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pos, setPos] = useState({ top: 0, right: 0 });
   const btnRef = useRef(null);
 
-  const current = session.attendanceStatus || "pending";
+  const current = occurrence.status || "pending";
 
   const handleToggle = (e) => {
     e.stopPropagation();
@@ -115,7 +122,19 @@ function AttendanceStatusDropdown({ session }) {
     }
     try {
       setSaving(true);
-      await updateAttendanceStatus(session.id, newStatus);
+      const patch = { status: newStatus };
+      if (newStatus !== "makeup") {
+        patch.makeupDate = null;
+        patch.makeup = null; // ← امسح ميعاد التعويض بالكامل لو رجّعنا الحالة لغير makeup
+      }
+      await upsertOccurrenceLocal(occurrence.sessionId, occurrence.date, patch, {
+        studentName: occurrence.studentName || parentSession?.studentName,
+        studentPhone: occurrence.studentPhone || parentSession?.studentPhone,
+        teacherName: occurrence.teacherName || parentSession?.teacherName,
+        supervisorId: occurrence.supervisorId || parentSession?.supervisorId,
+        supervisorName: occurrence.supervisorName || parentSession?.supervisorName,
+        time: occurrence.time,
+      });
     } catch (err) {
       console.error(err);
     } finally {
@@ -180,6 +199,9 @@ function AttendanceStatusDropdown({ session }) {
   );
 }
 
+// ← Fix: كان ناقص import لـ ChevronDown هنا (كان جاي ضمنيًا من فوق) — أضفناه
+import { ChevronDown, ChevronUp, Users } from "lucide-react";
+
 // ─── Map session → form shape (بدون تغيير) ────────────────────
 const sessionToForm = (s) => ({
   name: s.studentName || "",
@@ -197,20 +219,20 @@ const sessionToForm = (s) => ({
   pauseUntil: s.pauseUntil || "",
   notes: s.notes || "",
   flagged: s.flagged || false,
+  sessionNumber: s.sessionNumber || "",
   makeup: s.makeup ?? null,
   _hasBeenActive: ["active", "paused", "cancelled"].includes(s.status),
 });
 
-// ─── Edit Modal ────────────────────────────────────────────────
+// ─── Edit Modal (بدون تغيير) ────────────────────────────────────
 function EditModal({ session, teachers, programs, onClose, onSave }) {
-  const { updateSession } = useApp(); // ← من Context مباشر
+  const { updateSession } = useApp();
   const [form, setForm] = useState(sessionToForm(session));
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
     try {
       setSaving(true);
-      // updateSession(id, form, teacherName) — نفس signature الموجود في Context
       await updateSession(session.id, form);
       await onSave?.();
       onClose();
@@ -227,7 +249,6 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
         className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden"
         dir="rtl"
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div>
             <h3 className="text-base font-bold text-slate-800">تعديل الحلقة</h3>
@@ -243,7 +264,6 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
           </button>
         </div>
 
-        {/* Form */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
           <StudentSessionForm
             form={form}
@@ -254,7 +274,6 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
           />
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-100 bg-slate-50/50">
           <button
             onClick={onClose}
@@ -281,149 +300,231 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
 }
 
 function isMakeupPast(makeup) {
-  if (!makeup?.date || !makeup?.studentTime) return false
-  return new Date(`${makeup.date}T${makeup.studentTime}`) < new Date()
+  if (!makeup?.date || !makeup?.studentTime) return false;
+  return new Date(`${makeup.date}T${makeup.studentTime}`) < new Date();
 }
 
-function MakeupCell({ session, onOpen, onClearRequest }) {
-  const { makeup } = session
+// ← تاريخ اليوم + رقم يوم الأسبوع بتوقيت القاهرة
+function getTodayInfo() {
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+  const todayNumber = new Date(todayStr + "T00:00:00").getDay();
+  return { todayStr, todayNumber };
+}
 
-  // ← الشرط الصحيح: يظهر بس لو فيه طلب تأجيل معلّق ومفيش makeup مؤكد
-  const eligible = session.attendanceStatus === 'postponed' && !makeup?.confirmed
+// ← شفت وقت معيّن — مستخدمة في حساب مشرف التعويض الجديد (زي AdminSessions)
+function getShiftForTime(time) {
+  if (!time) return null;
+  const hour = parseInt(time.split(":")[0]);
+  if (hour >= 4 && hour < 12) return "morning";
+  if (hour >= 12 && hour < 20) return "afternoon";
+  return "evening";
+}
+
+// ─── MakeupCell — بقت شغالة على مستوى الحصة (occurrence) مش الحلقة ──
+function MakeupCell({ occurrence, onOpen, onClearRequest }) {
+  const { makeup } = occurrence;
+
+  // ← الشرط الصحيح بقى على حالة *الحصة* نفسها، مش حالة الحلقة كلها
+  const eligible = occurrence.status === "postponed" && !makeup?.confirmed;
 
   if (!makeup?.confirmed) {
-    if (!eligible) return null   // ← مش —، خالص ميظهرش حاجة
+    if (!eligible) return null;
     return (
-      <button onClick={() => onOpen(session)}
-        className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
-        <Plus size={12}/> تعويض
+      <button
+        onClick={() => onOpen(occurrence)}
+        className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all"
+      >
+        <Plus size={12} /> تعويض
       </button>
-    )
+    );
   }
 
-  const past = isMakeupPast(makeup)
+  const past = isMakeupPast(makeup);
   if (past) {
     return (
       <div className="flex flex-col gap-1">
-        <span className="text-xs text-slate-400 line-through">{makeup.date} — {makeup.studentTime}</span>
-        <button onClick={() => onOpen(session)}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all">
-          <Clock size={12}/> تعويض جديد
+        <span className="text-xs text-slate-400 line-through">
+          {makeup.date} — {makeup.studentTime}
+        </span>
+        <button
+          onClick={() => onOpen(occurrence)}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-all"
+        >
+          <Clock size={12} /> تعويض جديد
         </button>
       </div>
-    )
+    );
   }
 
   return (
     <div className="flex flex-col gap-0.5 group relative min-w-[100px]">
       <div className="flex items-center gap-1.5">
-        <span className="w-2 h-2 rounded-full bg-purple-400 flex-shrink-0 animate-pulse"/>
+        <span className="w-2 h-2 rounded-full bg-purple-400 flex-shrink-0 animate-pulse" />
         <span className="text-xs font-semibold text-purple-700">{makeup.day}</span>
       </div>
       <span className="text-xs text-slate-600 font-mono">{makeup.date}</span>
+      <button
+        onClick={() => onClearRequest(occurrence)}
+        className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs hover:bg-red-200 transition-all"
+      >
+        ✕
+      </button>
     </div>
-  )
+  );
 }
 
 // ─── Main Component ────────────────────────────────────────────
 export default function SupervisorHalaqas({ teachers, programs }) {
-
-  const[loadData, setLoadData] = useState(false);
+  const [loadData, setLoadData] = useState(false);
 
   const {
-    sessionsPerDay,
     sessionsForSupervisorLoading: loading,
     sessionsForSupervisorError: error,
     fetchSessionsForSupervisor,
     sessionsForSupervisor,
-updateMakeupLocal,
- resolvePostpone  // لو محتاج زر تحديث يدوي
+    occurrences, // ← جديد: مصدر حالات الحصص الحقيقي (نفس اللي AdminSessions بتستخدمه)
+    upsertOccurrenceLocal,
+    updateMakeupLocal,
+    supervisors, // ← محتاجينها لحساب مشرف الشيفت الجديد وقت تحديد تعويض
   } = useApp();
 
   const supervisorId = localStorage.getItem("uid");
 
-  useEffect(()=>{
+  const { todayStr, todayNumber } = useMemo(() => getTodayInfo(), []);
+
+  useEffect(() => {
     const fetchSessions = async () => {
-    try{
-    setLoadData(true);
-    await fetchSessionsForSupervisor(supervisorId);
-    setLoadData(false);
-    }
-    catch(e){
-      console.log(e.message);
-    }
-    }  
+      try {
+        setLoadData(true);
+        await fetchSessionsForSupervisor(supervisorId);
+      } catch (e) {
+        console.log(e.message);
+      } finally {
+        setLoadData(false);
+      }
+    };
     fetchSessions();
-  },[supervisorId]);
-
-  console.log(sessionsForSupervisor);
-  
-
-const [postponeResolving, setPostponeResolving] = useState(null)
-
- 
+  }, [supervisorId]);
 
   const [expanded, setExpanded] = useState({});
   const [editSession, setEditSession] = useState(null);
-
   const toggleExpand = (id) => setExpanded((p) => ({ ...p, [id]: !p[id] }));
+  const [confirm, setConfirm] = useState(null);
 
-  const [confirm, setConfirm] = useState(null)
+  // ═══════════════════════════════════════════════════════════
+  // ← جديد: بدل ما نعرض sessionsForSupervisor مباشرة، بنولّد منها حصص
+  //   "اليوم بس" (نفس محرك التوليد اللي AdminSessions بتستخدمه)، وبعدين
+  //   بنفلتر على المشرف الحالي دفاعيًا. كل تعديل حالة/تعويض بعد كده بيتم
+  //   على مستوى الحصة (occurrence) دي، مش على الحلقة كلها.
+  // ═══════════════════════════════════════════════════════════
+  const todayOccurrences = useMemo(() => {
+    if (!sessionsForSupervisor?.length) return [];
+    const list = generateOccurrences(sessionsForSupervisor, occurrences, {
+      rangeStart: todayStr,
+      rangeEnd: todayStr,
+    });
+    return list
+      .filter((o) => o.supervisorId === supervisorId)
+      .map((o) => ({
+        ...o,
+        parentSession: sessionsForSupervisor.find((s) => s.id === o.sessionId),
+      }));
+  }, [sessionsForSupervisor, occurrences, todayStr, supervisorId]);
 
-const handleClearMakeup = async (id) => {
-  await updateMakeupLocal(id, null)
-  setConfirm(null)
-}
-
-  // تجميع حسب المعلم + الوقت
+  // تجميع حصص اليوم حسب المعلم + الوقت
   const groups = useMemo(() => {
-  if (!sessionsForSupervisor?.length) return []; // ← guard
+    if (!todayOccurrences.length) return [];
+    const grouped = todayOccurrences.reduce((acc, o) => {
+      const key = `${o.teacherId}_${o.time || ""}`;
+      if (!acc[key])
+        acc[key] = {
+          key,
+          teacherName: o.teacherName || "—",
+          time: o.time || "—",
+          occurrences: [],
+        };
+      acc[key].occurrences.push(o);
+      return acc;
+    }, {});
+    return Object.values(grouped).sort((a, b) => a.time.localeCompare(b.time));
+  }, [todayOccurrences]);
 
-  const grouped = sessionsForSupervisor?.reduce((acc, s) => {
-    const key = `${s.teacherId}_${s.trialTime || s.regularDates?.[0]?.time || ""}`;
-    if (!acc[key])
-      acc[key] = {
-        key,
-        teacherName: s.teacherName || "—",
-        time: s.trialTime || s.regularDates?.[0]?.time || "—",
-        sessions: [],
-      };
-    acc[key].sessions.push(s);
-    return acc;
-  }, {});
-
-  return Object.values(grouped).sort((a, b) => a.time.localeCompare(b.time));
-}, [sessionsForSupervisor]);
-  const getStats = (sess) => ({
-    active: sess.filter((s) => s.status === "active").length,
-    trial: sess.filter((s) => s.status === "trial").length,
-    paused: sess.filter((s) => s.status === "paused").length,
-    cancelled: sess.filter((s) => s.status === "cancelled").length,
+  const getStats = (occs) => ({
+    active: occs.filter((o) => o.parentSession?.status === "active").length,
+    trial: occs.filter((o) => o.parentSession?.status === "trial").length,
+    paused: occs.filter((o) => o.parentSession?.status === "paused").length,
+    cancelled: occs.filter((o) => o.parentSession?.status === "cancelled").length,
   });
 
-    const [makeupModal,   setMakeupModal]   = useState(false);
-  const [makeupSession, setMakeupSession] = useState(null);
-  const [makeupForm,    setMakeupForm]    = useState({
-    day: '', date: '', studentTime: '', teacherTime: '', timezone: 'Africa/Cairo'
+  const [makeupModal, setMakeupModal] = useState(false);
+  const [makeupOccurrence, setMakeupOccurrence] = useState(null); // ← الحصة اللي بنحدد ليها تعويض
+  const [makeupSession, setMakeupSession] = useState(null); // ← بس للعرض (اسم/رقم) جوه المودال
+  const [makeupForm, setMakeupForm] = useState({
+    day: "",
+    date: "",
+    studentTime: "",
+    teacherTime: "",
+    timezone: "Africa/Cairo",
   });
 
-   const openMakeup = (s) => {
-    setMakeupSession(s);
-    setMakeupForm({ day:'', date:'', studentTime:'', teacherTime:'', timezone:'Africa/Cairo' });
+  const openMakeup = (occ) => {
+    setMakeupOccurrence(occ);
+    setMakeupSession({
+      id: occ.sessionId,
+      studentName: occ.studentName,
+      sessionNumber: occ.sessionNumber,
+      makeup: occ.makeup,
+    });
+    setMakeupForm(
+      occ.makeup
+        ? { ...occ.makeup }
+        : { day: "", date: "", studentTime: "", teacherTime: "", timezone: "Africa/Cairo" }
+    );
     setMakeupModal(true);
   };
 
-const saveMakeup = async () => {
-  console.log('Saving makeup for session ID:', makeupSession.id)   // ← أضف ده مؤقتاً
-  await updateMakeupLocal(makeupSession.id, { ...makeupForm, confirmed: true })
-  // if (postponeResolving) {
-  //   console.log('Resolving postpone for:', postponeResolving)   // ← وده
-  //   await resolvePostpone(postponeResolving, makeupForm.date, makeupForm.studentTime)
-  //   setPostponeResolving(null)
-  // }
+  // ← تحديد تعويض: بيتسجل على مستوى الحصة (occurrence) — status: 'makeup'،
+  //   مع تحديث نسخة الحلقة (session.makeup) كمان عشان reminderJob.js لسه
+  //   بيقرا منها عشان يبعت تذكير الواتساب
+  const saveMakeup = async () => {
+    const makeupData = { ...makeupForm, confirmed: true };
 
-  setMakeupModal(false)
-}
+    const makeupShift = getShiftForTime(makeupForm.studentTime);
+    const shiftSupervisors = (supervisors || []).filter(
+      (s) => s.shift === makeupShift && s.status === "active"
+    );
+    const newSupervisor = shiftSupervisors[0];
+
+    if (newSupervisor) {
+      makeupData.supervisorId = newSupervisor.id;
+      makeupData.supervisorName = newSupervisor.name;
+    }
+
+    if (makeupOccurrence) {
+      await upsertOccurrenceLocal(makeupOccurrence.sessionId, makeupOccurrence.date, {
+        status: "makeup",
+        makeup: makeupData,
+        makeupDate: makeupForm.date,
+        supervisorId: newSupervisor?.id || undefined,
+        supervisorName: newSupervisor?.name || undefined,
+      });
+    }
+
+    await updateMakeupLocal(makeupSession.id, makeupData);
+
+    setMakeupModal(false);
+    setMakeupOccurrence(null);
+  };
+
+  // ← حذف ميعاد التعويض — يرجع الحصة لحالة "طلب تعويض" (زي AdminSessions بالظبط)
+  const handleClearMakeup = async (occ) => {
+    await upsertOccurrenceLocal(occ.sessionId, occ.date, {
+      status: "postponed",
+      makeup: null,
+      makeupDate: null,
+    });
+    setConfirm(null);
+  };
 
   if (loading)
     return (
@@ -438,7 +539,7 @@ const saveMakeup = async () => {
       <div className="text-center py-20">
         <p className="text-red-400 mb-3">⚠️ {error}</p>
         <button
-          onClick={()=> fetchSessionsForSupervisor(supervisorId)}
+          onClick={() => fetchSessionsForSupervisor(supervisorId)}
           className="text-sm text-teal-600 hover:underline"
         >
           إعادة المحاولة
@@ -453,12 +554,11 @@ const saveMakeup = async () => {
         <div>
           <h2 className="text-xl font-bold text-gray-800">حلقاتي</h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            {sessionsForSupervisor?.length} حلقة مخصصة لك
+            {todayOccurrences.length} حصة اليوم ({todayStr})
           </p>
         </div>
-        {/* الـ Context بيعمل refetch تلقائي، بس تقدر تسيب الزرار */}
         <button
-          onClick={()=> fetchSessionsForSupervisor(supervisorId)}
+          onClick={() => fetchSessionsForSupervisor(supervisorId)}
           className="flex items-center gap-2 px-4 py-2 text-sm border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all"
         >
           <RefreshCw size={14} /> تحديث
@@ -471,9 +571,7 @@ const saveMakeup = async () => {
           <div className="w-14 h-14 rounded-2xl bg-teal-50 flex items-center justify-center mx-auto mb-4">
             <BookOpen size={24} className="text-teal-400" />
           </div>
-          <p className="text-gray-400 font-medium">
-            لا توجد حلقات موزعة عليك حالياً
-          </p>
+          <p className="text-gray-400 font-medium">لا توجد حلقات لك اليوم</p>
         </div>
       )}
 
@@ -481,14 +579,10 @@ const saveMakeup = async () => {
       <div className="flex flex-col gap-4">
         {groups.map((group) => {
           const isOpen = expanded[group.key] === true;
-          const stats = getStats(group.sessions);
+          const stats = getStats(group.occurrences);
 
           return (
-            <div
-              key={group.key}
-              className="bg-white rounded-2xl border border-gray-100 shadow-sm "
-            >
-              {/* Group Header */}
+            <div key={group.key} className="bg-white rounded-2xl border border-gray-100 shadow-sm">
               <button
                 className="w-full flex flex-col md:flex-row md:items-center justify-between gap-4 px-6 py-5 hover:bg-gray-50/50 transition-colors text-right"
                 onClick={() => toggleExpand(group.key)}
@@ -498,55 +592,34 @@ const saveMakeup = async () => {
                     <BookOpen size={20} className="text-teal-600" />
                   </div>
                   <div>
-                    {/* <div className="font-bold text-gray-800 text-base">
-                      {group.teacherName}
-                    </div> */} 
-
-                       <div className="font-bold text-gray-800 text-base">
-                      {group.sessions[0]?.sessionNumber}
-                     </div> 
+                    <div className="font-bold text-gray-800 text-base">
+                      {group.occurrences[0]?.sessionNumber}
+                    </div>
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-500">
                       <span className="flex items-center gap-1">
                         <Clock size={11} /> {group.time}
                       </span>
-                      {/* <span className="flex items-center gap-1">
-                        <Users size={11} /> {group.sessions.length} حلقة
-                      </span> */}
                     </div>
 
-                   {/* ← بدل الشرط القديم بده */}
                     {!isOpen && (
                       <div className="flex flex-col gap-1 mt-2">
-                        {group.sessions.slice(0, 3).map((s) => (
-                          <>
-                          <span
-                            key={s.id}
-                            className="text-xs text-gray-500 flex items-center gap-3"
-                          >
+                        {group.occurrences.slice(0, 3).map((o) => (
+                          <span key={o.id} className="text-xs text-gray-500 flex items-center gap-3">
                             <span className="w-1.5 h-1.5 rounded-full bg-teal-400 flex-shrink-0" />
-                            {s.studentName}
-                            {s.studentPhone && (
+                            {o.studentName}
+                            {o.parentSession?.studentPhone && (
                               <span className="flex items-center gap-1 text-gray-400">
-                                <Phone size={11} /> {s.studentPhone}
+                                <Phone size={11} /> {o.parentSession.studentPhone}
                               </span>
                             )}
-                            <StatusBadge status={s.attendanceStatus || "لم يُحدَّد"} />
+                            <StatusBadge status={o.status} />
                           </span>
-
-</>
-                          
-                          
-                        )
-                        )
-                        }
-
-                        {group.sessions.length > 3 && (
+                        ))}
+                        {group.occurrences.length > 3 && (
                           <span className="text-xs text-gray-400 mr-4">
-                            +{group.sessions.length - 3} أخرى...
+                            +{group.occurrences.length - 3} أخرى...
                           </span>
                         )}
-
-
                       </div>
                     )}
                   </div>
@@ -574,27 +647,19 @@ const saveMakeup = async () => {
                         {stats.cancelled} ملغي
                       </span>
                     )}
-
                   </div>
                   <div
                     className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${
-                      isOpen
-                        ? "bg-teal-50 text-teal-600"
-                        : "bg-gray-100 text-gray-400"
+                      isOpen ? "bg-teal-50 text-teal-600" : "bg-gray-100 text-gray-400"
                     }`}
                   >
-                    {isOpen ? (
-                      <ChevronUp size={16} />
-                    ) : (
-                      <ChevronDown size={16} />
-                    )}
+                    {isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </div>
                 </div>
               </button>
 
-              {/* Table */}
               {isOpen && (
-                <div className="border-t border-gray-100 overflow-x-auto z-[0] ">
+                <div className="border-t border-gray-100 overflow-x-auto z-[0]">
                   <table className="w-full min-w-[560px]">
                     <thead>
                       <tr className="bg-gray-50/80">
@@ -605,9 +670,9 @@ const saveMakeup = async () => {
                           "المعلم",
                           "البلد",
                           "الموعد",
-                          "الحالة",
-                          "حالة الحضور",
-                          " إجراء",
+                          "حالة الحلقة",
+                          "حالة الحصة",
+                          "إجراء",
                         ].map((h, i) => (
                           <th
                             key={i}
@@ -619,85 +684,67 @@ const saveMakeup = async () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
-                      {group.sessions.map((s) => {
-                        const dateDisplay =
-                          s.trialDate || s.regularDates?.[0]?.day || "—";
-                        const timeDisplay =
-                          s.trialTime || s.regularDates?.[0]?.time || "";
+                      {group.occurrences.map((o) => {
+                        const parentSession = o.parentSession;
                         return (
-                          <tr
-                            key={s.id}
-                            className="hover:bg-gray-50/50 transition-colors"
-                          >
+                          <tr key={o.id} className="hover:bg-gray-50/50 transition-colors">
                             <td className="px-5 py-4">
                               <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">
-                                #{s.sessionNumber}
+                                #{o.sessionNumber}
                               </span>
                             </td>
                             <td className="px-5 py-4">
                               <div className="flex items-center gap-3">
                                 <div className="w-9 h-9 rounded-xl bg-teal-50 flex items-center justify-center text-sm font-bold text-teal-700 flex-shrink-0">
-                                  {s.studentName?.charAt(0) || "؟"}
+                                  {o.studentName?.charAt(0) || "؟"}
                                 </div>
-                                <span className="font-medium text-gray-800">
-                                  {s.studentName || "—"}
-                                </span>
+                                <span className="font-medium text-gray-800">{o.studentName || "—"}</span>
                               </div>
                             </td>
                             <td className="px-5 py-4 text-xs text-gray-500 font-mono">
-                              {s.studentPhone ? (
+                              {parentSession?.studentPhone ? (
                                 <span className="flex items-center gap-1">
-                                  <Phone size={11} /> {s.studentPhone}
+                                  <Phone size={11} /> {parentSession.studentPhone}
                                 </span>
                               ) : (
                                 "—"
                               )}
                             </td>
-                              <td className="px-5 py-4 text-xs text-gray-500">
-                              {s.teacherName || "—"}
-                            </td>
-                            <td className="px-5 py-4 text-xs text-gray-500">
-                              {s.country || "—"}
-                            </td>
-
+                            <td className="px-5 py-4 text-xs text-gray-500">{o.teacherName || "—"}</td>
+                            <td className="px-5 py-4 text-xs text-gray-500">{parentSession?.country || "—"}</td>
                             <td className="px-5 py-4">
                               <div className="flex flex-col gap-0.5">
-                                <span className="text-xs text-gray-700 font-mono">
-                                  {dateDisplay}
-                                </span>
-                                {timeDisplay && (
-                                  <span className="text-xs text-gray-400 font-mono">
-                                    {timeDisplay}
-                                  </span>
-                                )}
+                                <span className="text-xs text-gray-700 font-mono">{o.date}</span>
+                                {o.time && <span className="text-xs text-gray-400 font-mono">{o.time}</span>}
                               </div>
                             </td>
                             <td className="px-5 py-4">
-                              <StatusBadge status={s.status} />
+                              <StatusBadge status={parentSession?.status} />
                             </td>
-
                             <td className="px-5 py-4">
-                              <AttendanceStatusDropdown session={s}  />
+                              <AttendanceStatusDropdown occurrence={o} parentSession={parentSession} />
                             </td>
-
-
-                           
-
                             <td className="px-4 py-4">
-  <div className="flex items-center gap-1.5">
-   <MakeupCell session={s} onOpen={openMakeup}
-    onClearRequest={(id) => setConfirm({ id, type: 'makeup' })}/>
-                    
-
-    <button
-      onClick={(e) => { e.stopPropagation(); setEditSession(s); }}
-      title="تعديل الحلقة"
-      className="w-8 h-8 flex items-center justify-center rounded-xl text-slate-400 hover:text-teal-600 hover:bg-teal-50 transition-all"
-    >
-      <Pencil size={14} />
-    </button>
-  </div>
-</td>
+                              <div className="flex items-center gap-1.5">
+                                <MakeupCell
+                                  occurrence={o}
+                                  onOpen={openMakeup}
+                                  onClearRequest={(occ) => setConfirm({ occ, type: "makeup" })}
+                                />
+                                {parentSession && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditSession(parentSession);
+                                    }}
+                                    title="تعديل الحلقة"
+                                    className="w-8 h-8 flex items-center justify-center rounded-xl text-slate-400 hover:text-teal-600 hover:bg-teal-50 transition-all"
+                                  >
+                                    <Pencil size={14} />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
                           </tr>
                         );
                       })}
@@ -710,43 +757,48 @@ const saveMakeup = async () => {
         })}
       </div>
 
-      {/* Edit Modal */}
       {editSession && (
         <EditModal
           session={editSession}
           teachers={teachers}
           programs={programs}
           onClose={() => setEditSession(null)}
-          onSave={null} // مش محتاج — Context بيعمل refetch تلقائي
+          onSave={null}
         />
       )}
 
-      {/* ← Makeup Modal الجديد */}
-     {makeupModal && makeupSession && (
-      <MakeupModal
-      session={makeupSession}
-      form={makeupForm}
-      setForm={setMakeupForm}
-      onClose={() => setMakeupModal(false)}
-      onSave={saveMakeup}
-    />
-  )}
+      {makeupModal && makeupSession && (
+        <MakeupModal
+          session={makeupSession}
+          form={makeupForm}
+          setForm={setMakeupForm}
+          onClose={() => setMakeupModal(false)}
+          onSave={saveMakeup}
+        />
+      )}
 
-  {/* Confirm Dialog */}
-{confirm && (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
-    <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full space-y-4">
-      <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center mx-auto text-2xl">🗑️</div>
-      <p className="text-slate-700 text-center font-medium">هل تريد حذف ميعاد التعويض؟</p>
-      <div className="flex gap-3 justify-center">
-        <button onClick={() => setConfirm(null)}
-          className="px-5 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 text-sm">إلغاء</button>
-        <button onClick={() => handleClearMakeup(confirm.id)}
-          className="px-5 py-2 rounded-xl text-white text-sm font-medium bg-red-500 hover:bg-red-600">تأكيد الحذف</button>
-      </div>
-    </div>
-  </div>
-)}
+      {confirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center mx-auto text-2xl">🗑️</div>
+            <p className="text-slate-700 text-center font-medium">هل تريد حذف ميعاد التعويض؟</p>
+            <div className="flex gap-3 justify-center">
+              <button
+                onClick={() => setConfirm(null)}
+                className="px-5 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 text-sm"
+              >
+                إلغاء
+              </button>
+              <button
+                onClick={() => handleClearMakeup(confirm.occ)}
+                className="px-5 py-2 rounded-xl text-white text-sm font-medium bg-red-500 hover:bg-red-600"
+              >
+                تأكيد الحذف
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

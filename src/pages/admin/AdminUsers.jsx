@@ -11,18 +11,20 @@ const inputClass = "w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.
 
 // ─── Supervisors Tab ──────────────────────────────────────────────────────────
 
-// ─── Supervisors Tab ──────────────────────────────────────────────────────────
+function pad2(n) { return String(n).padStart(2, '0') }
 
-// ← يوم واحد بعد تاريخ معين (YYYY-MM-DD) — نفس منطق الرجوع في checkAbsentSupervisorsJob
-// ⚠️ لازم نستخدم مكونات التاريخ المحلية (getFullYear/getMonth/getDate) لا toISOString،
-//   لأن toISOString بيحوّل لـ UTC، وده في توقيت القاهرة (UTC+2/+3) بيرجّع يوم واحد للخلف
+function lastDayOfMonth(yyyy, mm) {
+  return new Date(yyyy, mm, 0).getDate() // new Date(year, month, 0) بيرجع آخر يوم في الشهر السابق لـ month
+}
+
 function nextDayStr(dateStr) {
   const d = new Date(dateStr + 'T00:00:00')
   d.setDate(d.getDate() + 1)
-  const y   = d.getFullYear()
-  const m   = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+
+function cairoTodayStr() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Cairo' })
 }
 
 function SupervisorsTab() {
@@ -50,8 +52,14 @@ function SupervisorsTab() {
   const role    = localStorage.getItem("role")
   const isAdmin = role === 'admin'
 
-  const filtered = supervisors.filter(s => {
-    const matchSearch = s.name.includes(search) || (s.phone || '').includes(search)
+  // ← المشرفين النشطين (غير المحذوفين) فقط بيدخلوا الفلترة والجدول الأساسي
+  const activeSupervisors = supervisors.filter(s => !s.isDeleted)
+
+  // ← المشرفين المحذوفين بيتفصلوا في قايمة منفصلة عشان يتعرضوا في قسمهم الخاص
+  const deletedSupervisors = supervisors.filter(s => s.isDeleted)
+
+  const filtered = activeSupervisors.filter(s => {
+    const matchSearch = s.name?.toLowerCase().includes(search?.toLowerCase()) || (s.phone || '').includes(search)
     const matchShift  = filterShift  === 'all' || s.shift  === filterShift
     const matchStatus = filterStatus === 'all' || s.status === filterStatus
     return matchSearch && matchShift && matchStatus
@@ -177,16 +185,7 @@ function SupervisorsTab() {
                 <td className="px-5 py-4 text-sm text-gray-600">{shiftLabel(s.shift)}</td>
                 <td className="px-5 py-4"><Badge status={s.status}/></td>
                 <td className="px-5 py-4">
-                  {s.isDeleted ? (
-                    <div className="flex items-center gap-2">
-                      {isAdmin && (
-                        <button onClick={() => setRestock({ id: s.id, name: s.name, shift: s.shift })}
-                          className="flex items-center justify-center gap-1.5 text-xs px-3 py-1.5 w-[50%] rounded-xl border font-semibold bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 transition-all">
-                          استعادة
-                        </button>
-                      )}
-                    </div>
-                  ) : isAdmin ? (
+                  {isAdmin ? (
                     <div className="flex items-center gap-2">
                       <button onClick={() => openEdit(s)} className="p-2 text-yellow-600 rounded-xl hover:text-teal-600 hover:bg-teal-50 transition-all"><Pencil size={16}/></button>
                       <button onClick={() => setConfirm({ id: s.id, shift: s.shift, name: s.name })} className="p-2 text-red-500 rounded-xl hover:bg-red-50 transition-all"><Trash2 size={16}/></button>
@@ -206,6 +205,48 @@ function SupervisorsTab() {
           </tbody>
         </table>
       </div>
+
+      {/* ← قسم منفصل للمشرفين المحذوفين، بيظهر بس لو فيه مشرفين محذوفين */}
+      {deletedSupervisors.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/80">
+            <h3 className="text-sm font-bold text-gray-600">المشرفين المحذوفين</h3>
+          </div>
+          <table className="w-full">
+            <thead>
+              <tr className="bg-gray-50/50 border-b border-gray-100">
+                {['الاسم','الهاتف','الشيفت', isAdmin ? 'إجراء' : ''].map(h => (
+                  <th key={h} className="px-5 py-4 text-right text-sm font-semibold text-gray-500 uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {deletedSupervisors.map(s => (
+                <tr key={s.id} className="hover:bg-gray-50/50 transition-colors">
+                  <td className="px-5 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold bg-gray-100 text-gray-500">
+                        {s.name.charAt(0)}
+                      </div>
+                      <span className="font-medium text-gray-500">{s.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-5 py-4 text-sm text-gray-400 font-mono">{s.phone}</td>
+                  <td className="px-5 py-4 text-sm text-gray-500">{shiftLabel(s.shift)}</td>
+                  <td className="px-5 py-4">
+                    {isAdmin && (
+                      <button onClick={() => setRestock({ id: s.id, name: s.name, shift: s.shift })}
+                        className="flex items-center justify-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border font-semibold bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 transition-all">
+                        استعادة
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {modalOpen && (
         <Modal
@@ -305,7 +346,9 @@ function SupervisorsTab() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">إلى تاريخ</label>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+                  إلى تاريخ <span className="text-red-400">*</span>
+                  </label>
                   <input
                     type="date"
                     value={absentUntil}
@@ -327,18 +370,25 @@ function SupervisorsTab() {
               )}
             </div>
           ) : null}
-          onConfirm={async () => {
-            // ← لو غياب جديد، اتأكد إن "إلى" بعد أو يساوي "من"
-            if (attendConfirm.supervisor.status !== 'absent' && absentFrom && absentUntil && absentUntil < absentFrom) {
-              setDateError('تاريخ النهاية لازم يكون بعد تاريخ البداية')
-              return
-            }
-            await toggleAbsent(attendConfirm.supervisor.id, absentFrom || null, absentUntil || null)
-            setAbsentFrom('')
-            setAbsentUntil('')
-            setDateError('')
-            setAttendConfirm(null)
-          }}
+        onConfirm={async () => {
+  if (attendConfirm.supervisor.status !== 'absent') {
+    // ← "إلى تاريخ" بقى إلزامي: من غيره مش هينعرف نوزّع حصصه على باقي
+    //   المشرفين في أيام غيابه، وهيفضل غائب من غير حد يتابع الطلاب بدالًا عنه
+    if (!absentUntil) {
+      setDateError('لازم تحدد "إلى تاريخ" عشان نقدر نوزّع حصصه على باقي المشرفين')
+      return
+    }
+    if (absentFrom && absentUntil < absentFrom) {
+      setDateError('تاريخ النهاية لازم يكون بعد تاريخ البداية')
+      return
+    }
+  }
+  await toggleAbsent(attendConfirm.supervisor.id, absentFrom || null, absentUntil || null)
+  setAbsentFrom('')
+  setAbsentUntil('')
+  setDateError('')
+  setAttendConfirm(null)
+}}
           onCancel={() => {
             setAbsentFrom('')
             setAbsentUntil('')
@@ -375,14 +425,14 @@ function TeachersTab() {
   const [modalOpen, setModal]     = useState(false)
   const [editItem,  setEditItem]  = useState(null)
   const [confirm,   setConfirm]   = useState(null)
-  const [form,      setForm]      = useState({ name: '', phone: '', program: '', shift: '' })
+  const [form,      setForm]      = useState({ name: '', phone: '', shift: '' })
 
   if (teachersLoading) return <div className="flex items-center justify-center py-20 text-gray-400"><div className="animate-spin w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full ml-2"/>جاري التحميل...</div>
   if (teachersError)   return <div className="text-center py-20 text-red-400">⚠️ {teachersError}</div>
 
-  const filtered = teachers.filter(t => !t.isDeleted && t.name.includes(search))
-  const openAdd  = () => { setEditItem(null); setForm({ name: '', phone: '', program: '', shift: '' }); setModal(true) }
-  const openEdit = t  => { setEditItem(t); setForm({ name: t.name, phone: t.phone, program: t.program || '', shift: t.shift || '' }); setModal(true) }
+  const filtered = teachers.filter(t => !t.isDeleted && t.name?.toLowerCase().includes(search?.toLowerCase()))
+  const openAdd  = () => { setEditItem(null); setForm({ name: '', phone: '', shift: '' }); setModal(true) }
+  const openEdit = t  => { setEditItem(t); setForm({ name: t.name, phone: t.phone, shift: t.shift || '' }); setModal(true) }
   const save     = async () => { if (editItem) await updateTeacher({ ...editItem, ...form }); else await addTeacher(form); setModal(false) }
 
   return (
@@ -403,7 +453,7 @@ function TeachersTab() {
         <table className="w-full">
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-100">
-              {['الاسم','البرنامج','الهاتف','إجراء'].map(h => (
+              {['الاسم','الهاتف','إجراء'].map(h => (
                 <th key={h} className="px-5 py-4 text-right text-sm font-semibold text-gray-500 uppercase tracking-wider">{h}</th>
               ))}
             </tr>
@@ -418,7 +468,6 @@ function TeachersTab() {
                     <span className="font-medium text-gray-800">{t.name}</span>
                   </div>
                 </td>
-                <td className="px-5 py-4 text-sm text-gray-500">{t.program || '—'}</td>
                 <td className="px-5 py-4 text-sm text-gray-500 font-mono">{t.phone}</td>
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-2">
@@ -445,13 +494,6 @@ function TeachersTab() {
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">رقم الهاتف <span className="text-red-400">*</span></label>
                 <PhoneInput country={'eg'} value={form.phone} onChange={phone => setForm(p => ({ ...p, phone }))}
                   inputClass="w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all"/>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">البرنامج</label>
-                <select className={inputClass} value={form.program} onChange={e => setForm(p => ({ ...p, program: e.target.value }))}>
-                  <option value="">اختر البرنامج</option>
-                  {programs?.filter(p => !p.isDeleted).map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-                </select>
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-2 pt-2">
@@ -487,7 +529,7 @@ function ProgramsTab() {
   if (programsLoading) return <div className="flex items-center justify-center py-20 text-gray-400"><div className="animate-spin w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full ml-2"/>جاري التحميل...</div>
   if (programsError)   return <div className="text-center py-20 text-red-400">⚠️ {programsError}</div>
 
-  const filtered = programs?.filter(p => !p.isDeleted && p.name.includes(search))
+  const filtered = programs?.filter(p => !p.isDeleted && p.name?.toLowerCase().includes(search?.toLowerCase()))
   const openAdd  = () => { setEditItem(null); setForm({ name: '', description: '', image: '' }); setImagePreview(null); setModal(true) }
   const openEdit = t  => { setEditItem(t); setForm({ name: t.name, description: t.description || '', image: t.image || '' }); setImagePreview(t.image || null); setModal(true) }
 
@@ -631,9 +673,153 @@ function StudentBadge({ status }) {
 const EMPTY_FORM = {
   name: '', phone: '', country: '', teacherId: '',
   program: '', status: 'trial', contactMethod: '',
+  sessionNumber: '', trialTeacherTime: '', cancelledDate: '',
   notes: '', trialDate: '', trialTime: '', startDate: '',
   regularDates: [{ day: '', time: '', teacherTime: '', timezone: 'Africa/Cairo' }],
   pauseType: '', pauseUntil: '', _hasBeenActive: false,
+}
+
+// ← آخر يوم في شهر معيّن، شكل الإدخال "YYYY-MM"
+function monthEndStr(monthStr) {
+  if (!monthStr) return null
+  const [y, m] = monthStr.split('-').map(Number)
+  if (!y || !m) return null
+  const end = new Date(y, m, 0)
+  return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`
+}
+
+function todayStr() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function prevDayStr(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00')
+  d.setDate(d.getDate() - 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+export function getStatusAtMonth(session, monthYearStr) {
+  if (!monthYearStr) return session.status
+
+  const [yyyy, mm] = monthYearStr.split('-').map(Number)
+  if (!mm || !yyyy) return session.status
+
+  const monthStartStr = `${yyyy}-${pad2(mm)}-01`
+  const monthEndStr   = `${yyyy}-${pad2(mm)}-${pad2(lastDayOfMonth(yyyy, mm))}`
+
+  const history = (session.history || [])
+    .filter((h) => h?.date && h?.status)
+    .slice()
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+
+  if (!history.length) return session.status
+
+  // ← الحلقة لسه ماكانتش موجودة في الشهر ده
+  if (monthEndStr < history[0].date) return null
+
+  const todayStr = cairoTodayStr()
+  const isFutureMonth = monthStartStr > todayStr
+
+  // ═══ الشهر ماضي أو الشهر الحالي: إعادة بناء عادية من الـ history ═══
+  if (!isFutureMonth) {
+    let statusAtEnd = null
+    for (const h of history) {
+      if (h.date <= monthEndStr) statusAtEnd = h.status
+      else break
+    }
+    return statusAtEnd
+  }
+
+  // ═══ الشهر مستقبلي بالكامل: قواعد خاصة حسب الحالة الحالية ═══
+  const current = session.status
+
+  if (current === 'cancelled') return 'cancelled'
+
+  if (current === 'trial') {
+    if (session.trialDate && session.trialDate >= monthStartStr && session.trialDate <= monthEndStr) {
+      return 'trial'
+    }
+    return null
+  }
+
+  if (current === 'paused') {
+    if (session.pauseType === 'dated' && session.pauseUntil) {
+      const returnDate = nextDayStr(session.pauseUntil)
+      if (returnDate <= monthEndStr) return 'active'
+    }
+    return 'paused'
+  }
+
+  return current
+}
+
+// ← كل "الفترات" (segments) اللي حالة الحلقة مرّت بيها، متقاطعة مع مدى معيّن
+// كل عنصر: { status, from, to } — to === null يعني الفترة لسه مستمرة (الحالة الحالية)
+function getStatusSegments(session, rangeStart, rangeEnd) {
+  const hist = (session.history || [])
+    .filter(h => h.date && h.status)
+    .slice()
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+
+  if (!hist.length) {
+    // ← مفيش history: افترض إن الحالة الحالية سارية طول المدى المطلوب
+    return [{ status: session.status, from: rangeStart || null, to: rangeEnd || null }]
+  }
+
+  const raw = hist.map((cur, i) => {
+    const next = hist[i + 1]
+    return { status: cur.status, from: cur.date, to: next ? prevDayStr(next.date) : null }
+  })
+
+  return raw
+    .filter(seg => (!rangeEnd || seg.from <= rangeEnd) && (!rangeStart || seg.to === null || seg.to >= rangeStart))
+    .map(seg => ({
+      status: seg.status,
+      from: rangeStart && seg.from < rangeStart ? rangeStart : seg.from,
+      to:   seg.to === null ? (rangeEnd || null) : (rangeEnd && seg.to > rangeEnd ? rangeEnd : seg.to),
+    }))
+}
+
+// ── فلتر متعدد الاختيار (checkboxes في dropdown) ──
+function MultiFilterSelect({ value, onChange, options, label }) {
+  const [open, setOpen] = useState(false)
+  const isAll = value.includes('all') || value.length === 0
+  const toggle = (val) => {
+    if (val === 'all') { onChange(['all']); return }
+    let next = value.filter(v => v !== 'all')
+    next = next.includes(val) ? next.filter(v => v !== val) : [...next, val]
+    onChange(next.length === 0 ? ['all'] : next)
+  }
+  const selectedLabels = isAll ? options[0]?.label : options.filter(o => value.includes(o.value)).map(o => o.label).join('، ')
+
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(p => !p)}
+        className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm min-w-[130px] flex items-center justify-between gap-1.5">
+        <span className="truncate">{selectedLabels || label}</span>
+        <svg className={`w-3 h-3 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/>
+        </svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)}/>
+          <div className="absolute z-20 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-lg p-1.5 min-w-[160px] max-h-64 overflow-y-auto">
+            {options.map(o => {
+              const checked = o.value === 'all' ? isAll : value.includes(o.value)
+              return (
+                <label key={o.value} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer text-xs text-slate-600">
+                  <input type="checkbox" checked={checked} onChange={() => toggle(o.value)} className="w-3.5 h-3.5 rounded accent-teal-500"/>
+                  {o.label}
+                </label>
+              )
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  )
 }
 
 function StudentsTab() {
@@ -645,26 +831,60 @@ function StudentsTab() {
 
   const liveSessions = useMemo(() => allSessions.filter(s => !s.isDeleted), [allSessions])
 
-  const [search,        setSearch]        = useState('')
-  const [filterStatus,  setFilterStatus]  = useState('all')
-  const [filterProgram, setFilterProgram] = useState('all')
-  const [filterTeacher, setFilterTeacher] = useState('all')
-  const [page,          setPage]          = useState(1)
-  const [modalOpen,     setModalOpen]     = useState(false)
-  const [editItem,      setEditItem]      = useState(null)
-  const [form,          setForm]          = useState(EMPTY_FORM)
-  const [saving,        setSaving]        = useState(false)
-  const [confirm,       setConfirm]       = useState(null)
+  const [search,           setSearch]           = useState('')
+  const [filterStatus,     setFilterStatus]     = useState(['all'])   // ← بقت array
+  const [filterProgram,    setFilterProgram]    = useState(['all'])
+  const [filterTeacher,    setFilterTeacher]    = useState(['all'])
+  const [filterStudentId,  setFilterStudentId]  = useState('')        // ← جديد
+  const [filterSessionNumber, setFilterSessionNumber] = useState('')  // ← جديد
+  const [page,             setPage]             = useState(1)
+  const [modalOpen,        setModalOpen]        = useState(false)
+  const [editItem,         setEditItem]         = useState(null)
+  const [form,             setForm]             = useState(EMPTY_FORM)
+  const [saving,           setSaving]           = useState(false)
+  const [confirm,          setConfirm]          = useState(null)
 
-  const filtered = useMemo(() => liveSessions.filter(s => {
-    const matchSearch  = !search || s.studentName?.includes(search) || String(s.sessionNumber || '').includes(search) || (s.studentPhone || '').includes(search)
-    const matchStatus  = filterStatus  === 'all' || s.status    === filterStatus
-    const matchProgram = filterProgram === 'all' || s.program   === filterProgram
-    const matchTeacher = filterTeacher === 'all' || s.teacherId === filterTeacher
-    return matchSearch && matchStatus && matchProgram && matchTeacher
-  }), [liveSessions, search, filterStatus, filterProgram, filterTeacher])
+  // ← نوع فلتر التاريخ: none (الحالة الحيّة) / month (شهر واحد) / range (فترة)
+  const [dateFilterMode, setDateFilterMode] = useState('none')
+  const [filterMonth,    setFilterMonth]    = useState('')  // "YYYY-MM"
+  const [filterDateFrom, setFilterDateFrom] = useState('')
+  const [filterDateTo,   setFilterDateTo]   = useState('')
 
-  useEffect(() => { setPage(1) }, [search, filterStatus, filterProgram, filterTeacher])
+  const filtered = useMemo(() => {
+    const rangeStart = dateFilterMode === 'range' ? (filterDateFrom || null) : null
+    const rangeEnd   = dateFilterMode === 'range' ? (filterDateTo   || null) : null
+
+    return liveSessions.reduce((acc, s) => {
+      const matchSearch  = !search || s.studentName?.toLowerCase().includes(search?.toLowerCase()) || String(s.sessionNumber?.toLowerCase() || '').includes(search?.toLowerCase()) || (s.studentPhone || '').includes(search)
+      const matchProgram = filterProgram.includes('all') || filterProgram.includes(s.program)
+      const matchTeacher = filterTeacher.includes('all') || filterTeacher.includes(s.teacherId)
+      const matchStudent = !filterStudentId || s.id === filterStudentId
+      const matchSessionNumber = !filterSessionNumber || String(s.sessionNumber || '').toLowerCase().includes(filterSessionNumber.trim().toLowerCase())
+
+      let statusAtMonth = null
+      let segments = null
+      let matchStatus = true
+
+      if (dateFilterMode === 'month') {
+        statusAtMonth = getStatusAtMonth(s, filterMonth)
+        if (statusAtMonth === null) return acc // الحلقة اتسجلت بعد الشهر ده
+        matchStatus = filterStatus.includes('all') || filterStatus.includes(statusAtMonth)
+      } else if (dateFilterMode === 'range' && (rangeStart || rangeEnd)) {
+        segments = getStatusSegments(s, rangeStart, rangeEnd)
+        if (!segments.length) return acc
+        matchStatus = filterStatus.includes('all') || segments.some(seg => filterStatus.includes(seg.status))
+      } else {
+        matchStatus = filterStatus.includes('all') || filterStatus.includes(s.status)
+      }
+
+      if (matchSearch && matchStatus && matchProgram && matchTeacher && matchStudent && matchSessionNumber) {
+        acc.push({ ...s, _statusAtMonth: statusAtMonth, _segments: segments })
+      }
+      return acc
+    }, [])
+  }, [liveSessions, search, filterStatus, filterProgram, filterTeacher, filterStudentId, filterSessionNumber, dateFilterMode, filterMonth, filterDateFrom, filterDateTo])
+
+  useEffect(() => { setPage(1) }, [search, filterStatus, filterProgram, filterTeacher, filterStudentId, filterSessionNumber, dateFilterMode, filterMonth, filterDateFrom, filterDateTo])
 
   const totalFiltered = filtered.length
   const totalPages    = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE))
@@ -680,6 +900,7 @@ function StudentsTab() {
     setEditItem(s)
     setForm({
       name:           s.studentName   || '',
+      sessionNumber:  s.sessionNumber || '',
       phone:          s.studentPhone  || '',
       country:        s.country       || '',
       teacherId:      s.teacherId     || '',
@@ -689,11 +910,13 @@ function StudentsTab() {
       notes:          s.notes         || '',
       trialDate:      s.trialDate     || '',
       trialTime:      s.trialTime     || '',
+      trialTeacherTime: s.trialTeacherTime || '',
       startDate:      s.startDate     || '',
       regularDates:   s.regularDates  || [{ day: '', time: '', teacherTime: '', timezone: 'Africa/Cairo' }],
       pauseType:      s.pauseType     || '',
       pauseUntil:     s.pauseUntil    || '',
       _hasBeenActive: s._hasBeenActive || ['active', 'paused', 'cancelled'].includes(s.status),
+      cancelledDate:  s.cancelledDate || '',
     })
     setModalOpen(true)
   }
@@ -715,11 +938,18 @@ function StudentsTab() {
 
   const formValid = !!(form.name?.trim() && form.teacherId && (
     form.status === 'trial'  ? form.trialDate && form.trialTime :
-    form.status === 'active' ? form.regularDates?.some(d => d.day && d.time) : true
+    form.status === 'active' ? form.regularDates?.some(d => d.day && d.time) :
+    form.status === 'paused' ? (form.pauseType !== 'dated' || form.pauseUntil) : true
   ))
 
-  const hasActiveFilters = filterStatus !== 'all' || filterProgram !== 'all' || filterTeacher !== 'all'
-  const clearFilters = () => { setFilterStatus('all'); setFilterProgram('all'); setFilterTeacher('all') }
+const hasActiveFilters = !filterStatus.includes('all') || !filterProgram.includes('all') || !filterTeacher.includes('all') ||
+  !!filterStudentId || !!filterSessionNumber || dateFilterMode !== 'none'
+
+  const clearFilters = () => {
+    setFilterStatus(['all']); setFilterProgram(['all']); setFilterTeacher(['all'])
+    setFilterStudentId(''); setFilterSessionNumber('')
+    setDateFilterMode('none'); setFilterMonth(''); setFilterDateFrom(''); setFilterDateTo('')
+  }
 
   if (allSessionsLoading && allSessions.length === 0) return (
     <div className="flex items-center justify-center py-20 text-gray-400">
@@ -730,7 +960,7 @@ function StudentsTab() {
   if (allSessionsError) return <div className="text-center py-20 text-red-400">⚠️ {allSessionsError}</div>
 
   const statusOpts = [
-    { value: 'all',       label: 'الكل'    },
+    { value: 'all',       label: 'كل الحالات' },
     { value: 'active',    label: 'نشط'     },
     { value: 'trial',     label: 'تجريبي'  },
     { value: 'paused',    label: 'متوقف'   },
@@ -759,21 +989,75 @@ function StudentsTab() {
       {/* فلاتر */}
       <div className="flex flex-wrap items-center gap-3">
         <Filter size={14} className="text-gray-400"/>
-        {[
-          { label: 'الحالة',   value: filterStatus,  onChange: setFilterStatus,  options: statusOpts },
-          { label: 'البرنامج', value: filterProgram, onChange: setFilterProgram,
-            options: [{ value: 'all', label: 'كل البرامج' }, ...programs.filter(p => !p.isDeleted).map(p => ({ value: p.name, label: p.name }))] },
-          { label: 'المعلم',   value: filterTeacher, onChange: setFilterTeacher,
-            options: [{ value: 'all', label: 'كل المعلمين' }, ...teachers.filter(t => !t.isDeleted).map(t => ({ value: t.id, label: t.name.replace('الشيخ ', '') }))] },
-        ].map(f => (
-          <div key={f.label} className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-gray-500">{f.label}:</span>
-            <select value={f.value} onChange={e => f.onChange(e.target.value)}
-              className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm min-w-[130px]">
-              {f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
+
+        <MultiFilterSelect value={filterStatus} onChange={setFilterStatus} label="كل الحالات" options={statusOpts}/>
+
+        <MultiFilterSelect
+          value={filterProgram}
+          onChange={setFilterProgram}
+          label="كل البرامج"
+          options={[
+            { value: 'all', label: 'كل البرامج' },
+            ...programs.filter(p => !p.isDeleted).map(p => ({ value: p.name, label: p.name })),
+          ]}
+        />
+
+        <MultiFilterSelect
+          value={filterTeacher}
+          onChange={setFilterTeacher}
+          label="كل المعلمين"
+          options={[
+            { value: 'all', label: 'كل المعلمين' },
+            ...teachers.filter(t => !t.isDeleted).map(t => ({ value: t.id, label: t.name.replace('الشيخ ', '') })),
+          ]}
+        />
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-500">الطالب:</span>
+          <select value={filterStudentId} onChange={e => setFilterStudentId(e.target.value)}
+            className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm min-w-[150px]">
+            <option value="">بدون فلتر طالب</option>
+            {liveSessions.map(s => <option key={s.id} value={s.id}>{s.studentName} — #{s.sessionNumber}</option>)}
+          </select>
+        </div>
+
+        <input
+          type="text"
+          value={filterSessionNumber}
+          onChange={e => setFilterSessionNumber(e.target.value)}
+          placeholder="رقم الحلقة"
+          className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm w-28"
+        />
+
+        <div className="w-px h-6 bg-slate-200"/>
+
+        {/* نوع فلتر التاريخ */}
+        <select value={dateFilterMode} onChange={e => setDateFilterMode(e.target.value)}
+          className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm">
+          <option value="none">الحالة الحيّة</option>
+          <option value="month">شهر محدد</option>
+          <option value="range">فترة (من - إلى)</option>
+        </select>
+
+        {dateFilterMode === 'month' && (
+          <>
+            <input type="month" value={filterMonth} onChange={e => setFilterMonth(e.target.value)}
+              className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm"/>
+          </>
+        )}
+
+        {dateFilterMode === 'range' && (
+          <div className="flex items-center gap-1.5">
+            <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
+              max={filterDateTo || undefined}
+              className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm"/>
+            <span className="text-xs text-slate-400">إلى</span>
+            <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
+              min={filterDateFrom || undefined}
+              className="text-sm border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm"/>
           </div>
-        ))}
+        )}
+
         {hasActiveFilters && (
           <button onClick={clearFilters}
             className="text-xs text-red-400 hover:text-red-600 px-3 py-2 rounded-xl hover:bg-red-50 transition-all font-medium">
@@ -812,14 +1096,42 @@ function StudentsTab() {
                     <div className="w-9 h-9 rounded-xl bg-teal-50 flex items-center justify-center text-sm font-bold text-teal-700">
                       {s.studentName?.charAt(0) || '؟'}
                     </div>
-                    <span className="font-medium text-gray-800">{s.studentName || '—'}</span>
+                    <div>
+                      <span className="font-medium text-gray-800">{s.studentName || '—'}</span>
+                      {s.status === 'paused' && s.pauseType === 'dated' && s.pauseUntil && (
+                        <p className="text-xs text-orange-400 mt-0.5">
+                          متوقف حتى {s.pauseUntil} — يرجع نشط تلقائيًا {nextDayStr(s.pauseUntil)}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </td>
                 <td className="px-5 py-4 text-sm text-gray-500 font-mono">{s.studentPhone || '—'}</td>
                 <td className="px-5 py-4 text-sm text-gray-500">{s.country || '—'}</td>
                 <td className="px-5 py-4 text-sm text-gray-600">{s.teacherName?.replace('الشيخ ', '') || '—'}</td>
                 <td className="px-5 py-4 text-sm text-gray-600">{s.program || '—'}</td>
-                <td className="px-5 py-4"><StudentBadge status={s.status}/></td>
+                <td className="px-5 py-4">
+                  {/* ← وضع الفترة: اعرض كل الفترات (segments) اللي الحلقة مرّت بيها */}
+                  {dateFilterMode === 'range' && s._segments ? (
+                    <div className="flex flex-col gap-1">
+                      {s._segments.map((seg, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <StudentBadge status={seg.status}/>
+                          <span className="text-[10px] text-slate-400 font-mono whitespace-nowrap">
+                            {seg.from}{seg.to ? ` → ${seg.to}` : ' → مستمرة'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <>
+                      <StudentBadge status={s._statusAtMonth ?? s.status}/>
+                      {dateFilterMode === 'month' && s._statusAtMonth !== s.status && (
+                        <span className="block text-[10px] text-slate-400 mt-0.5">حاليًا: {STATUS_LABELS[s.status] || s.status}</span>
+                      )}
+                    </>
+                  )}
+                </td>
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-2">
                     <button onClick={() => openEdit(s)} className="p-2 text-yellow-600 rounded-xl hover:text-teal-600 hover:bg-teal-50 transition-all"><Pencil size={16}/></button>

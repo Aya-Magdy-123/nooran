@@ -3,6 +3,7 @@ import {
   getDocs,
   doc,
   updateDoc,
+  getDoc,
   query,
   where,
   orderBy,
@@ -21,14 +22,29 @@ export async function getPostponeRequests() {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
+// ← لازم يرجع بيانات الطلب (خصوصًا sessionId + originalDate) عشان
+//   AppContext يقدر يحدّث الـ occurrence الصحيحة لحالة "makeup"
 export async function resolvePostponeRequest(id, newDate, newTime) {
-  await updateDoc(doc(db, COL, id), {
+  const ref = doc(db, COL, id);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+
+  const data = { id: snap.id, ...snap.data() };
+
+  const resolvedAt = new Date().toISOString();
+  await updateDoc(ref, {
     status: "resolved",
     newDate,
     newTime,
-    resolvedAt: new Date().toISOString(),
+    resolvedAt,
   });
+
+  return { ...data, status: "resolved", newDate, newTime, resolvedAt };
 }
+
+// ← لازم يرجع array فيه بيانات كل طلب اتحل (sessionId + originalDate بالذات)،
+//   عشان AppContext.updateMakeupLocal يقدر يعمل loop عليها ويحدّث الـ
+//   occurrence المناسبة لكل واحد لحالة "makeup"
 export async function resolvePostponeBySessionId(sessionId, newDate, newTime) {
   const q = query(
     collection(db, COL),
@@ -37,12 +53,19 @@ export async function resolvePostponeBySessionId(sessionId, newDate, newTime) {
   );
   const snap = await getDocs(q);
 
+  const resolvedAt = new Date().toISOString();
+  const resolvedList = [];
+
   for (const docSnap of snap.docs) {
+    const data = { id: docSnap.id, ...docSnap.data() };
     await updateDoc(doc(db, COL, docSnap.id), {
       status: "resolved",
       newDate,
       newTime,
-      resolvedAt: new Date().toISOString(),
+      resolvedAt,
     });
+    resolvedList.push({ ...data, status: "resolved", newDate, newTime, resolvedAt });
   }
+
+  return resolvedList;
 }
