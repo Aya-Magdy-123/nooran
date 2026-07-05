@@ -81,7 +81,7 @@ const Login = () => {
     await forgotPassword(resetEmail);
 
     setMessage(
-      "تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني"
+      "تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني يمكنك صندوق الوارد او ال spam"
     );
 
     setShowReset(false);
