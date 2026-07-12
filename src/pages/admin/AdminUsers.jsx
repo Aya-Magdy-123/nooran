@@ -288,7 +288,7 @@ function SupervisorsTab() {
                 </select>
               </div>
             </div>
-            <div>
+            {/* <div>
               <label className="block text-xs font-semibold text-slate-500 mb-2">الحالة</label>
               <div className="grid grid-cols-2 gap-2">
                 {[
@@ -304,7 +304,7 @@ function SupervisorsTab() {
                   </button>
                 ))}
               </div>
-            </div>
+            </div> */}
             {saveError && (
               <p className="text-xs text-red-500 bg-red-50 border border-red-200 px-3 py-2 rounded-xl">⚠️ {saveError}</p>
             )}

@@ -224,16 +224,18 @@ const sessionToForm = (s) => ({
   _hasBeenActive: ["active", "paused", "cancelled"].includes(s.status),
 });
 
-// ─── Edit Modal (بدون تغيير) ────────────────────────────────────
+// ─── Edit Modal ────────────────────────────────────
 function EditModal({ session, teachers, programs, onClose, onSave }) {
-  const { updateSession } = useApp();
+  // ← Fix: الـ AppContext بيصدّر updateSessionLocal مش updateSession —
+  //   كان بيرمي error عند الحفظ (undefined is not a function)
+  const { updateSessionLocal } = useApp();
   const [form, setForm] = useState(sessionToForm(session));
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
     try {
       setSaving(true);
-      await updateSession(session.id, form);
+      await updateSessionLocal(session.id, form);
       await onSave?.();
       onClose();
     } catch (err) {
@@ -412,10 +414,14 @@ export default function SupervisorHalaqas({ teachers, programs }) {
   const [confirm, setConfirm] = useState(null);
 
   // ═══════════════════════════════════════════════════════════
-  // ← جديد: بدل ما نعرض sessionsForSupervisor مباشرة، بنولّد منها حصص
-  //   "اليوم بس" (نفس محرك التوليد اللي AdminSessions بتستخدمه)، وبعدين
-  //   بنفلتر على المشرف الحالي دفاعيًا. كل تعديل حالة/تعويض بعد كده بيتم
-  //   على مستوى الحصة (occurrence) دي، مش على الحلقة كلها.
+  // ← Fix: sessionsForSupervisor أصلاً جاي مفلتر من السيرفر على المشرف
+  //   الحالي (عبر getSupervisorSessions اللي بقت بتاخد في اعتبارها حالة
+  //   التعويض confirmed كمان). فلترة تانية هنا على occurrence.supervisorId
+  //   كانت بتشيل الحلقات غلط في حالة الـ makeup: الـ supervisorId بتاع
+  //   الـ occurrence بيتجمّد (frozen) على قيمة مخزَّنة قديمة في بعض الحالات
+  //   (isResolved/isPast/isSubstitute في generateOccurrences)، فمش دايمًا
+  //   بيطابق نفس المشرف اللي السيرفر أصلاً رجّع الحلقة عشانه. شيل الفلتر
+  //   المزدوج ده وسيب مصدر الحقيقة الوحيد هو getSupervisorSessions.
   // ═══════════════════════════════════════════════════════════
   const todayOccurrences = useMemo(() => {
     if (!sessionsForSupervisor?.length) return [];
@@ -423,13 +429,11 @@ export default function SupervisorHalaqas({ teachers, programs }) {
       rangeStart: todayStr,
       rangeEnd: todayStr,
     });
-    return list
-      .filter((o) => o.supervisorId === supervisorId)
-      .map((o) => ({
-        ...o,
-        parentSession: sessionsForSupervisor.find((s) => s.id === o.sessionId),
-      }));
-  }, [sessionsForSupervisor, occurrences, todayStr, supervisorId]);
+    return list.map((o) => ({
+      ...o,
+      parentSession: sessionsForSupervisor.find((s) => s.id === o.sessionId),
+    }));
+  }, [sessionsForSupervisor, occurrences, todayStr]);
 
   // تجميع حصص اليوم حسب المعلم + الوقت
   const groups = useMemo(() => {

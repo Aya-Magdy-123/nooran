@@ -33,10 +33,9 @@ const STATUS_LABELS = {
 const OCCURRENCE_STATUS_LABELS = {
   pending:   'قيد الانتظار',
   confirmed: 'سيحضر',
-  absent:    'لن يحضر',
+  cancelled: 'لن يحضر',
   postponed: 'طلب تعويض',
   makeup:    'تعويض محدَّد',
-  cancelled: 'ملغاة',
 }
 const OCCURRENCE_STATUS_STYLE = {
   pending:   'bg-slate-50 text-slate-500 border-slate-200',

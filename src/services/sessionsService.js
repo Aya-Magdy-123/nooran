@@ -71,7 +71,6 @@ export async function getSessionsPerDay() {
 //   الحلقة، عشان حلقة ممكن يكون ليها مشرف مختلف كل يوم)
 export async function getSupervisorSessions(supervisorId) {
   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
-  console.log("today", todayStr);
   const todayNumber = new Date(todayStr + "T00:00:00").getDay();
 
   const snap = await getDocs(
@@ -87,6 +86,16 @@ export async function getSupervisorSessions(supervisorId) {
 
       if (s.status === "active") {
         if (s.startDate && s.startDate > todayStr) return false; // لسه ماجاش موعد البداية
+
+        // ← جديد: لو فيه تعويض مؤكد بتاريخ النهاردة بالظبط، الحلقة تتبع
+        //   مشرف التعويض بس في اليوم ده، مش مشرف المعاد الأصلي في regularDates
+        //   (عشان معاد التعويض ممكن يبقى بمشرف مختلف تمامًا عن صاحب الحلقة الأصلي)
+        const hasMakeupToday = s.makeup?.confirmed === true && s.makeup?.date === todayStr;
+
+        if (hasMakeupToday) {
+          return s.makeup?.supervisorId === supervisorId;
+        }
+
         return (s.regularDates || []).some(
           (rd) => rd.dayNumber === todayNumber && rd.supervisorId === supervisorId,
         );
@@ -94,7 +103,6 @@ export async function getSupervisorSessions(supervisorId) {
 
       return false; // paused/cancelled/أي حالة تانية
     });
-    console.log("seesions", snap)
 }
 
 // ── إضافة حلقة مع توزيع تلقائي ──────────────────────────────
