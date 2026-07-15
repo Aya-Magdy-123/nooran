@@ -925,7 +925,7 @@ const clearFilters = () => {
 )}
 
       {/* Table — دايمًا على مستوى الحصص (occurrences)، مرتبة بالتاريخ ثم الوقت */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-x-auto">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>

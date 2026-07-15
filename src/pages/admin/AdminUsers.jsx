@@ -148,7 +148,7 @@ function SupervisorsTab() {
         )}
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-100">
@@ -208,7 +208,7 @@ function SupervisorsTab() {
 
       {/* ← قسم منفصل للمشرفين المحذوفين، بيظهر بس لو فيه مشرفين محذوفين */}
       {deletedSupervisors.length > 0 && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
           <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/80">
             <h3 className="text-sm font-bold text-gray-600">المشرفين المحذوفين</h3>
           </div>
@@ -449,7 +449,7 @@ function TeachersTab() {
           <Plus size={18}/> إضافة معلم
         </button>
       </div>
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-100">
@@ -561,7 +561,7 @@ function ProgramsTab() {
           <Plus size={18}/> إضافة برنامج
         </button>
       </div>
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-100">
@@ -1111,7 +1111,7 @@ const hasActiveFilters = !filterStatus.includes('all') || !filterProgram.include
       </div>
 
       {/* الجدول */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="bg-gray-50/80 border-b border-gray-100">
