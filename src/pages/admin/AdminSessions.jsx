@@ -592,10 +592,9 @@ const openMakeup = (occ) => {
 const saveMakeup = async () => {
   const makeupData = { ...makeupForm, confirmed: true }
 
-  // ← لو شيفت التعويض مختلف عن الشيفت الأصلي، هات مشرف الشيفت الجديد
   const makeupShift = getShiftForTime(makeupForm.studentTime)
   const shiftSupervisors = supervisors.filter(s => s.shift === makeupShift && s.status === 'active')
-  const newSupervisor = shiftSupervisors[0] // أو أي منطق round-robin/الأقل عددًا هنا
+  const newSupervisor = shiftSupervisors[0]
 
   if (newSupervisor) {
     makeupData.supervisorId   = newSupervisor.id
@@ -607,15 +606,29 @@ const saveMakeup = async () => {
       status: 'makeup',
       makeup: makeupData,
       makeupDate: makeupForm.date,
-      // ← نحدّث المشرف على مستوى الحصة نفسها كمان عشان يظهر في عمود "المشرف"
       supervisorId:   newSupervisor?.id   || undefined,
       supervisorName: newSupervisor?.name || undefined,
     })
   }
 
+  // ← جديد: عمل occurrence مستقلة على تاريخ التعويض نفسه، عشان تظهر
+  //   كحصة قائمة بذاتها لما تتصفح ذلك التاريخ/الشهر — مش بس كملحق
+  //   جوه عمود "تعويض" في الحصة الأصلية
+  if (makeupForm.date && makeupForm.studentTime) {
+    const parentSession = liveSessions.find(s => s.id === makeupSession.id)
+    await upsertOccurrenceLocal(makeupSession.id, makeupForm.date, {
+      status: 'confirmed',            // الحصة دي هتحصل فعلاً، مفيش داعي تفضل pending
+      time: makeupForm.studentTime,   // ← مهم: التاريخ ده مش من ضمن النمط العادي
+      isMakeupOccurrence: true,       // ← علامة تميّزها عن حصة عادية
+      makeupSourceDate: makeupOccurrence?.date || null, // مرجع للحصة الأصلية
+      supervisorId:   newSupervisor?.id   || undefined,
+      supervisorName: newSupervisor?.name || undefined,
+    }, {
+      studentName: parentSession?.studentName,
+      teacherName: parentSession?.teacherName,
+    })
+  }
 
-  // ← نسخة على مستوى الحلقة برضو، لأن reminderJob.js لسه بيقرا session.makeup.confirmed
-  //   عشان يبعت تذكير الواتساب بميعاد التعويض — من غيرها مش هيتبعتله تذكير
   await updateMakeupLocal(makeupSession.id, makeupData)
 
   if (postponeResolving) {
@@ -951,13 +964,22 @@ const clearFilters = () => {
                     <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">#{o.sessionNumber}</span>
                   </td>
                   <td className="px-4 py-3.5">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-xl bg-teal-50 flex items-center justify-center text-sm font-bold text-teal-700 flex-shrink-0">
-                        {o.studentName?.charAt(0) || '؟'}
-                      </div>
-                      <span className="font-medium text-slate-800 text-sm whitespace-nowrap">{o.studentName || '—'}</span>
-                    </div>
-                  </td>
+  <div className="flex items-center gap-2.5">
+    <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-sm font-bold flex-shrink-0 ${
+      o.isMakeupOccurrence ? 'bg-purple-50 text-purple-700' : 'bg-teal-50 text-teal-700'
+    }`}>
+      {o.studentName?.charAt(0) || '؟'}
+    </div>
+    <div className="flex flex-col gap-0.5">
+      <span className="font-medium text-slate-800 text-sm whitespace-nowrap">{o.studentName || '—'}</span>
+      {o.isMakeupOccurrence && (
+        <span className="flex items-center gap-1 text-[10px] font-semibold text-purple-600 bg-purple-50 border border-purple-200 rounded-md px-1.5 py-0.5 w-fit">
+          <Clock size={9}/> حصة تعويض
+        </span>
+      )}
+    </div>
+  </div>
+</td>
                   <td className="px-4 py-3.5 text-sm text-slate-600 whitespace-nowrap">{o.teacherName?.replace('الشيخ ','') || '—'}</td>
                   <td className="px-4 py-3.5">
                     {o.supervisorName ? (
@@ -1004,10 +1026,10 @@ const clearFilters = () => {
                             className="p-1.5 text-slate-300 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-all">
                             <Pencil size={14}/>
                           </button>
-                          <button onClick={() => setConfirm({ id: parentSession.id, type: 'session' })}
+                          {/* <button onClick={() => setConfirm({ id: parentSession.id, type: 'session' })}
                             className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
                             <Trash2 size={14}/>
-                          </button>
+                          </button> */}
                         </>
                       )}
                     </div>

@@ -1,4 +1,5 @@
 import { Clock } from 'lucide-react'
+import { useState } from 'react'
 
 const DAYS_AR = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']
 
@@ -52,6 +53,17 @@ export default function MakeupModal({ session, form, setForm, onClose, onSave })
     })
   }
 
+const [loading, setLoading] = useState(false)
+
+const handleOnSave = async () => {
+  setLoading(true)
+  try {
+    await onSave()
+  } finally {
+    setLoading(false)
+  }
+}
+
   return (
     <Modal
       title={
@@ -100,13 +112,15 @@ export default function MakeupModal({ session, form, setForm, onClose, onSave })
       <div className="flex justify-end gap-3 mt-5 pt-4 border-t border-slate-100">
         <button onClick={onClose}
           className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 text-sm">إلغاء</button>
-        <button onClick={onSave} disabled={!form.date || !form.studentTime}
+        <button onClick={()=> handleOnSave()  } disabled={!form.date || !form.studentTime}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-medium transition-all ${
             form.date && form.studentTime
               ? 'bg-gradient-to-r from-purple-600 to-purple-500 hover:shadow-md'
               : 'bg-slate-300 cursor-not-allowed'
-          }`}>
-          <Clock size={14}/> تأكيد التعويض
+          }
+          ${loading && "bg-purple-200"}`}>
+          <Clock size={14}/> {loading? "جاري التأكيد" : "تأكيد التعويض"} 
+
         </button>
       </div>
     </Modal>
