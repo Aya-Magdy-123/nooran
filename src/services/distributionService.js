@@ -435,16 +435,17 @@ export async function reassignAbsentSupervisorOccurrences(absentId, shift, fromD
       if (handledKeys.has(key)) continue;
       handledKeys.add(key);
 
-      const sub = assignNext(o.date);
-      if (!sub) {
-        console.warn(`[reassignAbsentSupervisorOccurrences] مفيش بديل متاح ليوم ${o.date} (الكل غايب)`);
-        continue;
-      }
+     const sub = assignNext(o.date);
+      // ← لو مفيش بديل متاح (كل مشرفين الشيفت غايبين في نفس اليوم)، بنسجل
+      //   الحصة صراحة بـ"لا يوجد مشرف" بدل ما نسيبها من غير تحديث خالص
       await OccurrencesService.upsertOccurrence(session.id, o.date, {
-        supervisorId: sub.id,
-        supervisorName: sub.name,
+        supervisorId: sub?.id ?? null,
+        supervisorName: sub?.name ?? "لا يوجد مشرف",
         substituteFor: absentId,
       });
+      if (!sub) {
+        console.warn(`[reassignAbsentSupervisorOccurrences] مفيش بديل متاح ليوم ${o.date} (الكل غايب) — اتسجلت "لا يوجد مشرف"`);
+      }
       writes++;
     }
   }
@@ -454,19 +455,18 @@ export async function reassignAbsentSupervisorOccurrences(absentId, shift, fromD
     if (handledKeys.has(key)) continue;
     handledKeys.add(key);
 
-    const sub = assignNext(o.date);
-    if (!sub) {
-      console.warn(`[reassignAbsentSupervisorOccurrences] مفيش بديل متاح ليوم ${o.date} (الكل غايب)`);
-      continue;
-    }
+   const sub = assignNext(o.date);
     await OccurrencesService.upsertOccurrence(o.sessionId, o.date, {
-      supervisorId: sub.id,
-      supervisorName: sub.name,
+      supervisorId: sub?.id ?? null,
+      supervisorName: sub?.name ?? "لا يوجد مشرف",
       // ← حافظ على صاحب الحلقة الأصلي لو كانت أصلاً بديل لحد تاني قبل كده
       //   (مش absentId نفسه)، عشان لما صاحبها الحقيقي يرجع من إجازته
       //   الحصة ترجعله تلقائي مهما عدد الاستبدالات المتسلسلة اللي حصلت
       substituteFor: o.substituteFor || absentId,
     });
+    if (!sub) {
+      console.warn(`[reassignAbsentSupervisorOccurrences] مفيش بديل متاح ليوم ${o.date} (الكل غايب) — اتسجلت "لا يوجد مشرف"`);
+    }
     writes++;
   }
 

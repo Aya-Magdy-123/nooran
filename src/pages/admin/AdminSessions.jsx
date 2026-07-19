@@ -482,15 +482,19 @@ const handleOccurrenceStatusChange = async (occ, newStatus) => {
   const patch = { status: newStatus }
   if (newStatus !== 'makeup') {
     patch.makeupDate = null
-    patch.makeup = null   // ← جديد: امسح ميعاد التعويض بالكامل، مش بس التاريخ
+    patch.makeup = null
   }
 
   await upsertOccurrenceLocal(occ.sessionId, occ.date, patch, {
-    studentName:    occ.studentName    || parentSession?.studentName,
-    studentPhone:   occ.studentPhone   || parentSession?.studentPhone,
-    teacherName:    occ.teacherName    || parentSession?.teacherName,
-    supervisorId:   occ.supervisorId   || parentSession?.supervisorId,
-    supervisorName: occ.supervisorName || parentSession?.supervisorName,
+    studentName:    occ.studentName  || parentSession?.studentName,
+    studentPhone:   occ.studentPhone || parentSession?.studentPhone,
+    teacherName:    occ.teacherName  || parentSession?.teacherName,
+    // ← ما فيش fallback للـ session هنا عمدًا: occ.supervisorId/Name أصلاً
+    //   القيمة الصح المحسوبة (لايف أو مجمّدة أو "لا يوجد مشرف")، ولو رجعنا
+    //   لـ parentSession.supervisorId كنا بنمسح "لا يوجد مشرف" ونرجعها
+    //   غلط لآيدي المشرف الغايب
+    supervisorId:   occ.supervisorId,
+    supervisorName: occ.supervisorName,
     time:           occ.time,
   })
 }
@@ -591,16 +595,31 @@ const openMakeup = (occ) => {
   }
 
  // ← تحديث التعويض محليًا بدون إعادة جلب كل الحلقات
+// ← تحديث التعويض محليًا بدون إعادة جلب كل الحلقات
 const saveMakeup = async () => {
   const makeupData = { ...makeupForm, confirmed: true }
 
+  // ← هل مشرف معيّن غايب في تاريخ التعويض بالذات؟ (نفس منطق isAbsentOnDate
+  //   في distributionService.js) — لازم نتأكد منها قبل ما نعيّنه، مش بس
+  //   إنه active بشكل عام، عشان ميتعيّنش على تعويض في يوم إجازته هو نفسه
+  const isAbsentOnDate = (sup, date) =>
+    (sup.absences || []).some(a => a.from <= date && date <= a.until)
+
   const makeupShift = getShiftForTime(makeupForm.studentTime)
-  const shiftSupervisors = supervisors.filter(s => s.shift === makeupShift && s.status === 'active')
+  const shiftSupervisors = supervisors.filter(
+    s => s.shift === makeupShift && s.status === 'active' && !isAbsentOnDate(s, makeupForm.date)
+  )
   const newSupervisor = shiftSupervisors[0]
 
   if (newSupervisor) {
     makeupData.supervisorId   = newSupervisor.id
     makeupData.supervisorName = newSupervisor.name
+  } else {
+    // ← مفيش حد متاح فعليًا (إما محدش في الشيفت ده، أو كل مين فيه غايب
+    //   في تاريخ التعويض بالذات) — نسجلها صراحة بدل ما نسيب القيمة
+    //   القديمة أو نعيّن حد غايب غلط
+    makeupData.supervisorId   = null
+    makeupData.supervisorName = "لا يوجد مشرف"
   }
 
   if (makeupOccurrence) {
@@ -608,8 +627,8 @@ const saveMakeup = async () => {
       status: 'makeup',
       makeup: makeupData,
       makeupDate: makeupForm.date,
-      supervisorId:   newSupervisor?.id   || undefined,
-      supervisorName: newSupervisor?.name || undefined,
+      supervisorId:   newSupervisor?.id   ?? null,
+      supervisorName: newSupervisor?.name ?? "لا يوجد مشرف",
     })
   }
 
@@ -623,8 +642,8 @@ const saveMakeup = async () => {
       time: makeupForm.studentTime,   // ← مهم: التاريخ ده مش من ضمن النمط العادي
       isMakeupOccurrence: true,       // ← علامة تميّزها عن حصة عادية
       makeupSourceDate: makeupOccurrence?.date || null, // مرجع للحصة الأصلية
-      supervisorId:   newSupervisor?.id   || undefined,
-      supervisorName: newSupervisor?.name || undefined,
+      supervisorId:   newSupervisor?.id   ?? null,
+      supervisorName: newSupervisor?.name ?? "لا يوجد مشرف",
     }, {
       studentName: parentSession?.studentName,
       teacherName: parentSession?.teacherName,

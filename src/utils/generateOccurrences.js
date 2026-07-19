@@ -296,7 +296,15 @@ function buildOccurrence(session, date, stored, occurrenceNumber = null) {
   const isPast       = date < todayStr()
   const isResolved   = !!stored?.status && stored.status !== 'pending'
   const isSubstitute = !!stored?.substituteFor
-  const shouldFreeze = !!stored?.supervisorId && (isPast || isResolved || isSubstitute)
+  // ← لو فيه substituteFor، ده معناه القيمة دي متسجلة من عملية استبدال
+  //   فعلية (سواء لاقت بديل أو "لا يوجد مشرف" لما محدش كان متاح)، فلازم
+  //   تفضل مجمّدة زي ما هي حتى لو supervisorId بقى null. الشرط القديم
+  //   (!!stored?.supervisorId) كان بيرجع تلقائيًا للمشرف الحي لما القيمة
+  //   المخزّنة null، وده كان بيمسح حالة "لا يوجد مشرف" وبيوريها كأنها لسه
+  //   متوزعة على المشرف الأصلي.
+  const hasStoredSupervisorField = !!stored && Object.prototype.hasOwnProperty.call(stored, 'supervisorId')
+  const shouldFreeze = isSubstitute || (hasStoredSupervisorField && (isPast || isResolved))
+
 
   return {
     id: stored?.id || `${session.id}__${date}`,
@@ -306,8 +314,8 @@ function buildOccurrence(session, date, stored, occurrenceNumber = null) {
     occurrenceNumber,
     teacherId: session.teacherId,
     teacherName: stored?.teacherName || session.teacherName,
-    supervisorId:   shouldFreeze ? stored.supervisorId   : liveSupervisorId,
-    supervisorName: shouldFreeze ? stored.supervisorName : liveSupervisorName,
+    supervisorId:   shouldFreeze ? (stored.supervisorId ?? null) : liveSupervisorId,
+    supervisorName: shouldFreeze ? (stored.supervisorName || "لا يوجد مشرف") : liveSupervisorName,
     flagged: stored?.flagged || false,
     date,
     time: stored?.time || matchingRegular?.time || (date === session.trialDate ? session.trialTime : session.regularDates?.[0]?.time),

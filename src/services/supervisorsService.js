@@ -78,6 +78,44 @@ function rangesOverlap(aFrom, aUntil, bFrom, bUntil) {
   return aFrom <= bUntil && bFrom <= aUntil
 }
 
+// ═══════════════════════════════════════════════════════════════
+// reflowOtherAbsencesInRange(shift, returningId, from, to)
+// بتتنفّذ بعد ما مشرف يرجع (إجازته اتمسحت/اتقصّرت) في فترة معيّنة.
+// بتدوّر على أي مشرف تاني في نفس الشيفت (غير returningId نفسه) لسه
+// غايب في نفس الفترة دي (كليًا أو جزئيًا)، وتعيد تشغيل التوزيع الخاص
+// بحلقاته هو (structural ownership، مش القيمة المخزّنة حاليًا) على قد
+// تقاطع إجازته مع الفترة المُحرَّرة. ده بيحل حالة: مشرفين اتنين غايبين
+// في نفس اليوم (فبقت الحصة "لا يوجد مشرف")، وبعدين واحد منهم بس رجع —
+// الحصة المفروض تاخد الرجّاع ده كبديل، مش تفضل معلّقة لحد ما التاني يرجع.
+// ═══════════════════════════════════════════════════════════════
+async function reflowOtherAbsencesInRange(shift, returningId, from, to) {
+  if (!shift || !from || !to) return
+
+  const supsSnap = await getDocs(
+    query(
+      collection(db, COL),
+      where("shift", "==", shift),
+      where("isDeleted", "==", false),
+    ),
+  )
+  // ← من غير فلتر isActive عمدًا: عايزين المشرفين الغايبين حاليًا برضه،
+  //   عشان دول بالظبط اللي محتاجين نعيد توزيع حلقاتهم
+  const shiftSupervisors = supsSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+
+  for (const sup of shiftSupervisors) {
+    if (sup.id === returningId) continue
+
+    const overlapping = (sup.absences || []).filter(a => a.from <= to && from <= a.until)
+    for (const a of overlapping) {
+      const overlapFrom = a.from > from ? a.from : from
+      const overlapTo   = a.until < to ? a.until : to
+      if (overlapFrom > overlapTo) continue
+
+      await reassignAbsentSupervisorOccurrences(sup.id, shift, overlapFrom, overlapTo)
+    }
+  }
+}
+
 // ── إضافة رينج إجازة جديد ──────────────────────────────────────
 // ← جديد: التوزيع الفعلي (reassignAbsentSupervisorOccurrences) بيحصل
 //   فورًا هنا لكل الفترة، سواء كانت الإجازة بتبدأ النهاردة أو في
@@ -150,7 +188,15 @@ export async function deleteAbsence(id, absenceId) {
 
   // لو الرينج ده كان اتوزّع فعلاً وفيه جزء لسه ماجاش (من النهاردة لحد آخره)، ننضّفه
   if (target.distributed && target.until >= today) {
-    await clearSubstituteOverridesInRange(id, today > target.from ? today : target.from, target.until)
+    const freedFrom = today > target.from ? today : target.from
+    const freedTo = target.until
+
+    await clearSubstituteOverridesInRange(id, freedFrom, freedTo)
+
+    // ← جديد: المشرف ده رجع متاح في الفترة دي. لو فيه مشرف تاني في نفس
+    //   الشيفت لسه غايب وبيتقاطع مع نفس الفترة، أعد توزيع حلقاته هو —
+    //   ممكن دلوقتي ياخدها المشرف اللي رجع بدل "لا يوجد مشرف"
+    await reflowOtherAbsencesInRange(supData.shift, id, freedFrom, freedTo)
   }
 }
 
@@ -235,6 +281,9 @@ export async function updateAbsence(id, absenceId, from, until) {
   for (const [rf, ru] of removedRanges) {
     if (rf > ru) continue
     await clearSubstituteOverridesInRange(id, rf, ru)
+    // ← نفس فكرة deleteAbsence: المشرف رجع متاح جزئيًا في الفترة دي،
+    //   فأعد محاولة توزيع أي مشرف تاني لسه غايب وبيتقاطع مع نفس الفترة
+    await reflowOtherAbsencesInRange(supData.shift, id, rf, ru)
   }
   for (const [af, au] of addedRanges) {
     if (af > au) continue
