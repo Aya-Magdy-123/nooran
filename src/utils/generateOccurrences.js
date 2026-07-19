@@ -376,12 +376,12 @@ export function buildSessionOccurrences(session, occurrencesMap = new Map(), opt
   //   شهره حتى لو مش من ضمن نمط الأيام المتكرر (regularDates)، عشان لو
   //   انضم بيوم مايصادفش أي معاد أسبوعي في هذا الشهر بالتحديد، يفضل
   //   ظاهر كدليل إنه انضم فيه
-  if (win.start) {
-    const dayOk = dayNumber === undefined || dayNumber === null
-      || toDateOnly(win.start)?.getDay() === dayNumber
-    const inRange = (!windowStart || win.start >= windowStart) && (!windowEnd || win.start <= windowEnd)
-    if (inRange && dayOk) dates.push(win.start)
-  }
+  // if (win.start) {
+  //   const dayOk = dayNumber === undefined || dayNumber === null
+  //     || toDateOnly(win.start)?.getDay() === dayNumber
+  //   const inRange = (!windowStart || win.start >= windowStart) && (!windowEnd || win.start <= windowEnd)
+  //   if (inRange && dayOk) dates.push(win.start)
+  // }
 }
     
   }
