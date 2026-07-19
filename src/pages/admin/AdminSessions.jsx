@@ -555,10 +555,18 @@ const handleOccurrenceStatusChange = async (occ, newStatus) => {
   const handleDeleteSession  = async (id) => { await deleteSessionLocal(id);         setConfirm(null) }
   const handleToggleFlag     = async (id) => { await toggleFlagLocal(id) }
 const handleClearMakeup = async (occ) => {
+  const parentSession = liveSessions.find(s => s.id === occ.sessionId)
   await upsertOccurrenceLocal(occ.sessionId, occ.date, {
-    status: 'postponed', // ← ترجع لحالة "طلب تعويض" بدل ما تختفي خالص؛ غيّرها لـ 'pending' لو تفضّل كده
+    status: 'postponed',
     makeup: null,
     makeupDate: null,
+  }, {
+    studentName:    occ.studentName  || parentSession?.studentName,
+    studentPhone:   occ.studentPhone || parentSession?.studentPhone,
+    teacherName:    occ.teacherName  || parentSession?.teacherName,
+    supervisorId:   occ.supervisorId,
+    supervisorName: occ.supervisorName,
+    time:           occ.time,
   })
   setConfirm(null)
 }
