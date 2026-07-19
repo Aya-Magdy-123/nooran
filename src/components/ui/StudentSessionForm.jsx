@@ -376,10 +376,19 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
             </button>
           </div>
           {form.pauseType === 'dated' && (
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">تاريخ العودة المتوقع</label>
-              <input type="date" className={inputClass} value={form.pauseUntil || ''}
-                onChange={e => setForm(p => ({ ...p, pauseUntil: e.target.value }))} />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-slate-500 mb-1"> من</label>
+                <input type="date" className={inputClass} value={form.pauseFrom || ''}
+                  max={form.pauseUntil || undefined}
+                  onChange={e => setForm(p => ({ ...p, pauseFrom: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1"> إلى</label>
+                <input type="date" className={inputClass} value={form.pauseUntil || ''}
+                  min={form.pauseFrom || undefined}
+                  onChange={e => setForm(p => ({ ...p, pauseUntil: e.target.value }))} />
+              </div>
             </div>
           )}
         </div>

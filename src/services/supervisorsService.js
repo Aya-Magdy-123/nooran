@@ -14,11 +14,11 @@ import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import {
   reassignAbsentSupervisor,
   redistributeShift,
-} from "./distributionService";  // ← جديد
+} from "./distributionService";
 
 import {
   reassignAbsentSupervisorOccurrences,
-  clearFutureSubstituteOverrides,
+  clearSubstituteOverridesInRange,
 } from "./distributionService";
 
 const COL = "supervisors";
@@ -70,52 +70,176 @@ export async function restoreSupervisor(id, shift) {
 
 }
 
-// ── تسجيل/إلغاء غياب المشرف ────────────────────────────────────
-// ← دعم إجازة بفترة: لو absentFrom في المستقبل، المشرف يفضل حاضر فعليًا
-//   لحد ما checkAbsentSupervisorsJob (يوميًا 4 الفجر) يفعّل الغياب تلقائيًا.
-//   absentFrom في الماضي/النهاردة (أو مش متبعتة) = غياب فوري.
+function genId() {
+  return `abs_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
 
+function rangesOverlap(aFrom, aUntil, bFrom, bUntil) {
+  return aFrom <= bUntil && bFrom <= aUntil
+}
 
-export async function toggleAbsent(id, absentFrom = null, absentUntil = null) {
-  const docSnap = await getDoc(doc(db, COL, id));
-  if (!docSnap.exists()) throw new Error("المشرف مش موجود");
+// ── إضافة رينج إجازة جديد ──────────────────────────────────────
+// ← جديد: التوزيع الفعلي (reassignAbsentSupervisorOccurrences) بيحصل
+//   فورًا هنا لكل الفترة، سواء كانت الإجازة بتبدأ النهاردة أو في
+//   المستقبل — بدل ما كان مقتصر على النهاردة بس وباقي على الكرون.
+//   الكرون (checkScheduledAbsences) هيفضل شغال زي ما هو كـ"شبكة أمان"
+//   بس (لو التوزيع هنا فشل لأي سبب)، وبما إن distributed=true اتسجلت،
+//   الكرون مش هيكرر التوزيع تاني.
+export async function addAbsence(id, from, until) {
+  if (!until) throw new Error('لازم تحدد "إلى تاريخ"')
 
-  const supData = docSnap.data();
+  const ref = doc(db, COL, id)
+  const docSnap = await getDoc(ref)
+  if (!docSnap.exists()) throw new Error("المشرف مش موجود")
+  const supData = docSnap.data()
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Cairo' })
 
-  if (supData.isActive) {
-    const startsToday = !absentFrom || absentFrom <= today
+  const effectiveFrom = from || today
 
-    await updateDoc(doc(db, COL, id), {
-      isActive: !startsToday,
-      absentFrom: absentFrom || null,
-      absentUntil: absentUntil || null,
-    });
+  if (until < effectiveFrom) throw new Error('تاريخ النهاية لازم يكون بعد تاريخ البداية')
 
-    if (startsToday) {
-      if (absentUntil) {
-        // ← بدل تغيير المشرف الدائم لكل الحلقات: نوزّع بس أيام الغياب الفعلية
-        await reassignAbsentSupervisorOccurrences(
-          id, supData.shift, absentFrom || today, absentUntil
-        );
-      } else {
-        console.warn("غياب من غير absentUntil — هيفضل مسجّل غائب من غير توزيع تلقائي، لازم يترجع يدوي");
-      }
-    }
-    // لو absentFrom في المستقبل، cron الساعة 4ص هو اللي هيستدعي نفس الدالة وقتها
-
-    return !startsToday
+  // ← منع التداخل مع أي رينج موجود بالفعل لنفس المشرف
+  const existing = supData.absences || []
+  const overlapping = existing.find(a => rangesOverlap(effectiveFrom, until, a.from, a.until))
+  if (overlapping) {
+    throw new Error(`الفترة دي متداخلة مع إجازة موجودة بالفعل (${overlapping.from} → ${overlapping.until})`)
   }
 
-  // ← رجوع يدوي فوري (قبل absentUntil الأصلي أو بعد ما كان مسجّل غائب فوري)
-  await updateDoc(doc(db, COL, id), {
-    isActive: true,
-    absentFrom: null,
-    absentUntil: null,
-  });
-  // مفيش داعي لـ redistributeShift للشيفت كله — بس ننضّف أي أيام مستقبلية
-  // كانت هتتوزع كبديل مؤقت، وباقي الأيام بترجع لصاحبها الأصلي تلقائيًا
-  await clearFutureSubstituteOverrides(id, today);
+  const newAbsence = {
+    id: genId(),
+    from: effectiveFrom,
+    until,
+    distributed: false,
+  }
 
-  return true
+  const absences = [...existing, newAbsence]
+  const startsNow = newAbsence.from <= today
+
+  await updateDoc(ref, {
+    absences,
+    isActive: startsNow ? false : supData.isActive,
+  })
+
+  // ← التوزيع بيحصل فورًا دايمًا، مش بس لو startsNow
+  await reassignAbsentSupervisorOccurrences(id, supData.shift, newAbsence.from, until)
+  const marked = absences.map(a => a.id === newAbsence.id ? { ...a, distributed: true } : a)
+  await updateDoc(ref, { absences: marked })
+
+  return newAbsence
+}
+
+// ← حذف رينج إجازة (سواء شغال دلوقتي أو مجدول في المستقبل أو حتى منتهي)
+export async function deleteAbsence(id, absenceId) {
+  const ref = doc(db, COL, id)
+  const docSnap = await getDoc(ref)
+  if (!docSnap.exists()) throw new Error("المشرف مش موجود")
+  const supData = docSnap.data()
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Cairo' })
+
+  const existing = supData.absences || []
+  const target = existing.find(a => a.id === absenceId)
+  if (!target) return
+
+  const remaining = existing.filter(a => a.id !== absenceId)
+  const stillAbsentToday = remaining.some(a => a.from <= today && a.until >= today)
+
+  await updateDoc(ref, {
+    absences: remaining,
+    isActive: !stillAbsentToday,
+  })
+
+  // لو الرينج ده كان اتوزّع فعلاً وفيه جزء لسه ماجاش (من النهاردة لحد آخره)، ننضّفه
+  if (target.distributed && target.until >= today) {
+    await clearSubstituteOverridesInRange(id, today > target.from ? today : target.from, target.until)
+  }
+}
+
+// ── أدوات تاريخ آمنة من مشاكل التايم زون ─────────────────────
+function parseDateOnly(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+function formatDateOnly(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+function addDays(dateStr, n) {
+  const d = parseDateOnly(dateStr)
+  d.setDate(d.getDate() + n)
+  return formatDateOnly(d)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// تعديل رينج إجازة موجود:
+// - لو "آخر يوم" اتقصّر → المشرف قاطع إجازته وهيرجع نشط من (آخر يوم الجديد + 1)،
+//   وأي أيام كانت له substitute في الفترة اللي اتشالت بترجع له تلقائيًا.
+// - لو "آخر يوم" أو "أول يوم" اتوسّع → الأيام الجديدة دي بتتوزع على بدلاء
+//   بنفس منطق addAbsence.
+// - الإجازة بتفضل بنفس الـ id، فالـ isActive بيتحسب بناءً على كل absences[]
+//   مش على الرينج ده لوحده (عشان لو فيه رينج تاني شغال في نفس الوقت).
+// ═══════════════════════════════════════════════════════════════
+export async function updateAbsence(id, absenceId, from, until) {
+  if (!until) throw new Error('لازم تحدد "إلى تاريخ"')
+
+  const ref = doc(db, COL, id)
+  const docSnap = await getDoc(ref)
+  if (!docSnap.exists()) throw new Error("المشرف مش موجود")
+  const supData = docSnap.data()
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Cairo' })
+
+  const existing = supData.absences || []
+  const target = existing.find(a => a.id === absenceId)
+  if (!target) throw new Error('الإجازة غير موجودة')
+
+  const newFrom  = from || target.from
+  const newUntil = until
+
+  // ── Validation: منع الحالة غير المتناسقة ──
+  if (newUntil < newFrom) {
+    throw new Error('تاريخ النهاية لازم يكون بعد تاريخ البداية')
+  }
+  const overlapping = existing.find(
+    a => a.id !== absenceId && rangesOverlap(newFrom, newUntil, a.from, a.until)
+  )
+  if (overlapping) {
+    throw new Error(`الفترة دي متداخلة مع إجازة موجودة بالفعل (${overlapping.from} → ${overlapping.until})`)
+  }
+
+  const oldFrom  = target.from
+  const oldUntil = target.until
+
+  const removedRanges = [] // أيام لازم ترجع لصاحبها الأصلي (نمسح الـ override)
+  const addedRanges   = [] // أيام جديدة لازم توزّع على بدلاء
+
+  if (newUntil < oldUntil) {
+    removedRanges.push([addDays(newUntil, 1), oldUntil])
+  } else if (newUntil > oldUntil) {
+    addedRanges.push([addDays(oldUntil, 1), newUntil])
+  }
+
+  if (newFrom > oldFrom) {
+    removedRanges.push([oldFrom, addDays(newFrom, -1)])
+  } else if (newFrom < oldFrom) {
+    addedRanges.push([newFrom, addDays(oldFrom, -1)])
+  }
+
+  const updatedAbsences = existing.map(a =>
+    a.id === absenceId ? { ...a, from: newFrom, until: newUntil } : a
+  )
+  const stillAbsentToday = updatedAbsences.some(a => a.from <= today && a.until >= today)
+
+  await updateDoc(ref, {
+    absences: updatedAbsences,
+    isActive: !stillAbsentToday,
+  })
+
+  for (const [rf, ru] of removedRanges) {
+    if (rf > ru) continue
+    await clearSubstituteOverridesInRange(id, rf, ru)
+  }
+  for (const [af, au] of addedRanges) {
+    if (af > au) continue
+    await reassignAbsentSupervisorOccurrences(id, supData.shift, af, au)
+  }
+
+  return updatedAbsences.find(a => a.id === absenceId)
 }

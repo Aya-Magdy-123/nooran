@@ -337,8 +337,8 @@ import { buildSessionOccurrences } from "../utils/generateOccurrences";
 import * as OccurrencesService from "./occurrencesService";
 
 export async function reassignAbsentSupervisorOccurrences(absentId, shift, fromDate, toDate) {
-  if (!shift || !fromDate || !toDate) {
-    console.warn("[reassignAbsentSupervisorOccurrences] محتاج shift + fromDate + toDate");
+  if (!fromDate || !toDate) {
+    console.warn("[reassignAbsentSupervisorOccurrences] محتاج fromDate + toDate");
     return;
   }
 
@@ -349,15 +349,22 @@ export async function reassignAbsentSupervisorOccurrences(absentId, shift, fromD
       where("isDeleted", "==", false),
     ),
   );
-  const mySessions = sessionsSnap.docs
+
+  // ← بنجيب كل الحلقات النشطة، وبنحدد ownership على مستوى كل regularDate
+  //   لوحده (مش على مستوى الحلقة كلها)، وبدون أي شرط شيفت هنا خالص —
+  //   الشيفت هيتاستخدم بعدين بس لاختيار البدلاء المتاحين
+  const candidateSessions = sessionsSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     .filter((s) =>
       s.status === "trial"
-        ? s.supervisorId === absentId && getShiftForTime(s.trialTime) === shift
-        : (s.regularDates || []).some((rd) => rd.supervisorId === absentId && getShiftForTime(rd.time) === shift),
+        ? s.supervisorId === absentId
+        : (s.regularDates || []).some((rd) => rd.supervisorId === absentId),
     );
 
-  if (!mySessions.length) return;
+  if (!candidateSessions.length) {
+    console.log(`[reassignAbsentSupervisorOccurrences] ${absentId}: مفيش حلقات مملوكة له.`);
+    return;
+  }
 
   const supsSnap = await getDocs(
     query(
@@ -377,31 +384,64 @@ export async function reassignAbsentSupervisorOccurrences(absentId, shift, fromD
   }
 
   let cursor = 0;
-  for (const session of mySessions) {
-    const dates = buildSessionOccurrences(session, new Map(), {
+  let writes = 0;
+
+  for (const session of candidateSessions) {
+    // ← كل تواريخ الحلقة في الرينج (زي القديم)، بعدين بنفلترها لبس
+    //   التواريخ اللي فعلاً صاحبها (المعاد المطابق ليها) هو absentId
+    const allDates = buildSessionOccurrences(session, new Map(), {
       rangeStart: fromDate,
       rangeEnd: toDate,
-    }).map((o) => o.date);
+    });
 
-    for (const date of dates) {
+    const ownedDates = allDates.filter((o) => {
+      if (session.status === "trial") {
+        return session.supervisorId === absentId;
+      }
+      const dow = new Date(`${o.date}T00:00:00`).getDay();
+      const rd = (session.regularDates || []).find((r) => r.dayNumber === dow);
+      return rd?.supervisorId === absentId;
+    });
+
+    for (const o of ownedDates) {
       const sub = others[cursor % others.length];
       cursor++;
-      await OccurrencesService.upsertOccurrence(session.id, date, {
+      await OccurrencesService.upsertOccurrence(session.id, o.date, {
         supervisorId: sub.id,
         supervisorName: sub.name,
         substituteFor: absentId,
       });
+      writes++;
     }
   }
+
+  console.log(`[reassignAbsentSupervisorOccurrences] ${absentId}: ${writes} حصة اتوزّعت من ${fromDate} لـ ${toDate}.`);
 }
 
-export async function clearFutureSubstituteOverrides(absentId, fromDate) {
-  const snap = await getDocs(
-    query(
-      collection(db, "sessionOccurrences"),
-      where("substituteFor", "==", absentId),
-      where("date", ">=", fromDate),
-    ),
-  );
-  await Promise.all(snap.docs.map((d) => OccurrencesService.unsetSupervisorOverride(d.id)));
+
+
+export async function clearSubstituteOverridesInRange(absentId, fromDate, toDate) {
+  const q = query(
+    collection(db, 'sessionOccurrences'),
+    where('substituteFor', '==', absentId),
+    where('date', '>=', fromDate),
+  )
+  const snap = await getDocs(q)
+  const batch = writeBatch(db)
+  let count = 0
+
+  snap.docs.forEach(d => {
+    const data = d.data()
+    if (toDate && data.date > toDate) return // برّه نطاق الرينج المحذوف
+    batch.update(doc(db, 'sessionOccurrences', d.id), {
+      supervisorId: null,
+      supervisorName: null,
+      substituteFor: null,
+      updatedAt: new Date().toISOString(),
+    })
+    count++
+  })
+
+  if (count) await batch.commit()
+  return count
 }

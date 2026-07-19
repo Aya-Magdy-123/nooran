@@ -52,11 +52,12 @@ const StatusBadge = ({ status }) => {
       className: "bg-green-50 text-green-700 border-green-200",
       label: "سيحضر",
     },
-    absent: {
+        cancelled: {
       icon: XCircle,
       className: "bg-red-50 text-red-600 border-red-200",
       label: "لن يحضر",
     },
+
     postponed: {
       icon: ClockIcon,
       className: "bg-amber-50 text-amber-700 border-amber-200",
@@ -67,11 +68,7 @@ const StatusBadge = ({ status }) => {
       className: "bg-purple-50 text-purple-700 border-purple-200",
       label: "تعويض محدَّد",
     },
-    cancelled: {
-      icon: XCircle,
-      className: "bg-red-50 text-red-600 border-red-200",
-      label: "ملغي",
-    },
+
   };
   const cfg = config[status] || {
     icon: HelpCircle,

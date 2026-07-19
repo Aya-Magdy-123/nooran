@@ -154,11 +154,38 @@ function buildActiveWindows(session) {
     }
   }
 
-  // ← توقف بتاريخ محدد (pauseType: 'dated'): نضيف نافذة افتراضية تبدأ من
-  //   اليوم اللي بعد pauseUntil، عشان الحصص المستقبلية تظهر قبل ما الكرون
-  //   يرجّع status فعليًا لـ active
-  if (session.status === 'paused' && session.pauseType === 'dated' && session.pauseUntil) {
+  // ═══ توقف بتاريخ محدد (pauseFrom → pauseUntil) ═══
+  // شغّالة في الحالتين:
+  //   1) الحلقة اتقفلت فعليًا دلوقتي (status === 'paused') — الجوب/الـ
+  //      client-check قلبوا الحالة الحقيقية خلاص.
+  //   2) التوقف لسه مجدول للمستقبل (pendingPauseDate موجودة، والحالة
+  //      الحيّة لسه active/trial زي ما هي عمدًا لحد ما ييجي pauseFrom).
+  // في الحالتين: مفيش حصص جوه [pauseFrom, pauseUntil]، وقبلها/بعدها
+  // التوزيع عادي — حتى لو فلترت على شهر مستقبلي بعيد.
+  if (session.pauseType === 'dated' && session.pauseFrom && session.pauseUntil && windows.length) {
+    const last = windows[windows.length - 1]
+    if (last && (last.status === 'active' || last.status === 'trial') && last.end === null && last.start <= session.pauseFrom) {
+      last.end = session.pauseFrom
+    }
     windows.push({ status: 'active', start: nextDayStr(session.pauseUntil), end: null })
+  }
+
+    // ═══ إلغاء مجدول للمستقبل (pendingCancelDate) — جديد ═══
+  if (session.pendingCancelDate && windows.length) {
+    const last = windows[windows.length - 1]
+    if (last && (last.status === 'active' || last.status === 'trial') && last.end === null && last.start <= session.pendingCancelDate) {
+      last.end = session.pendingCancelDate
+    }
+  }
+
+   // ═══ تفعيل مجدول (pendingActivateDate) ═══
+  // الحلقة لسه في حالتها القديمة فعليًا (غالبًا trial)، وماحصلش أي تسجيل
+  // في history لأن liveStatus فضلت زي ما هي (updateSession بتؤجل التفعيل
+  // الفعلي لحد ما يوصل startDate). لكن عندنا pendingActivateDate محفوظة
+  // فعلًا، فبنضيف نافذة "active" تبدأ منها مباشرة، عشان حصص الحلقة تظهر
+  // في شهرها/فترتها الصحيحة فورًا من غير ما نستنى الكرون يقلب الـstatus.
+  if (session.pendingActivateDate) {
+    windows.push({ status: 'active', start: session.pendingActivateDate, end: null })
   }
 
   return windows
@@ -326,12 +353,9 @@ export function buildSessionOccurrences(session, occurrencesMap = new Map(), opt
 
   const activeWindows = buildActiveWindows(session)
 
-  let dates = []
+    let dates = []
   for (const win of activeWindows) {
-    // ← تقاطع نافذة النشاط مع مدى الفلتر المطلوب
     const windowStart = maxDateStr(rangeStart, win.start)
-    // win.end هو تاريخ *بداية* الحالة الجاية (مثلاً paused)، فآخر يوم فعلي
-    // للنافذة هو اليوم اللي قبله
     const windowEnd = win.end ? minDateStr(rangeEnd, prevDayStr(win.end)) : rangeEnd
 
     if (win.status === 'trial') {
@@ -340,15 +364,26 @@ export function buildSessionOccurrences(session, occurrencesMap = new Map(), opt
         const dayOk = dayNumber === undefined || dayNumber === null || toDateOnly(session.trialDate)?.getDay() === dayNumber
         if (inRange && dayOk) dates.push(session.trialDate)
       }
-    } else if (win.status === 'active') {
-      const windowDates = enumerateRecurringDates(session, {
-        rangeStart: windowStart,
-        rangeEnd: windowEnd,
-        limitCount,
-        dayNumber,
-      })
-      dates.push(...windowDates)
-    }
+   } else if (win.status === 'active') {
+  const windowDates = enumerateRecurringDates(session, {
+    rangeStart: windowStart,
+    rangeEnd: windowEnd,
+    limitCount,
+    dayNumber,
+  })
+  dates.push(...windowDates)
+   // ← جديد: تاريخ الانضمام/الرجوع الفعلي (بداية النافذة) لازم يظهر في
+  //   شهره حتى لو مش من ضمن نمط الأيام المتكرر (regularDates)، عشان لو
+  //   انضم بيوم مايصادفش أي معاد أسبوعي في هذا الشهر بالتحديد، يفضل
+  //   ظاهر كدليل إنه انضم فيه
+  if (win.start) {
+    const dayOk = dayNumber === undefined || dayNumber === null
+      || toDateOnly(win.start)?.getDay() === dayNumber
+    const inRange = (!windowStart || win.start >= windowStart) && (!windowEnd || win.start <= windowEnd)
+    if (inRange && dayOk) dates.push(win.start)
+  }
+}
+    
   }
 
   // ← دفاعيًا: union مع أي override متخزَّن فعليًا لنفس الحلقة في نفس المدى،
@@ -359,7 +394,8 @@ export function buildSessionOccurrences(session, occurrencesMap = new Map(), opt
   const dateSet = new Set(dates)
   const storedExtra = filterStoredForSession(occurrencesMap, session.id, { rangeStart, rangeEnd, dayNumber }, dateSet)
 
-  const allDates = [...dates, ...storedExtra.map((o) => o.date)]
+  const allDates = [...new Set([...dates, ...storedExtra.map((o) => o.date)])]
+
 
   // ← ترقيم الحصص: رقم تسلسلي لكل حصة محسوب من بداية الحلقة فعليًا
   const numberMap = buildOccurrenceNumberMap(session, occurrencesMap, allDates)

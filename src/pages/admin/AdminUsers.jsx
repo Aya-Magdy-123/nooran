@@ -1,6 +1,6 @@
 // src/pages/admin/AdminUsers.jsx
 import { useState, useMemo, useEffect } from 'react'
-import { Plus, Pencil, Trash2, UserX, UserCheck, BookOpen, Filter, Users, GraduationCap, UserCog } from 'lucide-react'
+import { Plus, Pencil, Trash2, UserX, UserCheck, BookOpen, Filter, Users, GraduationCap, UserCog, Calendar } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { Modal, ConfirmDialog, Badge, PageHeader, EmptyState } from '../../components/ui'
 import PhoneInput from 'react-phone-input-2'
@@ -28,22 +28,25 @@ function cairoTodayStr() {
 }
 
 function SupervisorsTab() {
-  const { supervisors, addSupervisor, updateSupervisor, deleteSupervisor, toggleAbsent, restoreSupervisor } = useApp()
+  const { supervisors, addSupervisor, updateSupervisor, deleteSupervisor,
+          addAbsence, updateAbsence, deleteAbsence, restoreSupervisor } = useApp()
 
   const [search,        setSearch]        = useState('')
   const [modalOpen,     setModal]         = useState(false)
   const [editItem,      setEditItem]      = useState(null)
   const [confirm,       setConfirm]       = useState(null)
-  const [attendConfirm, setAttendConfirm] = useState(null)
   const [filterShift,   setFilterShift]   = useState('all')
   const [filterStatus,  setFilterStatus]  = useState('all')
   const [saveLoading,   setSaveLoading]   = useState(false)
   const [saveError,     setSaveError]     = useState('')
   const [restock,       setRestock]       = useState(null)
   const [isLoading,     setIsLoading]     = useState(false)
-  const [absentFrom,    setAbsentFrom]    = useState('')   // ← بداية الإجازة
-  const [absentUntil,   setAbsentUntil]   = useState('')   // ← نهاية الإجازة
-  const [dateError,     setDateError]     = useState('')   // ← لما "إلى" قبل "من"
+
+  // ← إدارة الإجازات (بدل attendConfirm/absentFrom/absentUntil القديمة)
+  const [absenceManagerFor,    setAbsenceManagerFor]    = useState(null) // supervisor object
+  const [deleteAbsenceConfirm, setDeleteAbsenceConfirm] = useState(null) // {supervisorId, absenceId, label}
+  // ← جديد: تعديل رينج إجازة موجود
+  const [editAbsenceTarget,    setEditAbsenceTarget]    = useState(null) // { supervisorId, absence }
 
   const [form, setForm] = useState({
     name: '', email: '', phone: '', shift: 'morning', status: 'active'
@@ -110,6 +113,25 @@ function SupervisorsTab() {
   // ── تاريخ اليوم بصيغة YYYY-MM-DD بتوقيت القاهرة (لا UTC) لحد أدنى لـ input date ──
   const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Cairo' })
 
+  // ═══════════════════════════════════════════════════════════
+  // ← جديد: ترتيب الإجازات في المودال
+  // 1) الحالية أولًا
+  // 2) المستقبلية (الأقرب بدايةً الأول)
+  // 3) المنتهية (الأحدث انتهاءً الأول) — بتتعرض كـ History في آخر القائمة
+  // ═══════════════════════════════════════════════════════════
+  const rankAbsence = (a) => {
+    if (a.from <= todayStr && a.until >= todayStr) return 0 // حالية
+    if (a.from > todayStr) return 1                          // مستقبلية
+    return 2                                                  // منتهية
+  }
+  const sortedAbsences = (absenceManagerFor?.absences || []).slice().sort((a, b) => {
+    const ra = rankAbsence(a), rb = rankAbsence(b)
+    if (ra !== rb) return ra - rb
+    if (ra === 1) return a.from.localeCompare(b.from)   // مستقبلية: الأقرب بدايةً الأول
+    if (ra === 2) return b.until.localeCompare(a.until) // منتهية: الأحدث الأول
+    return 0
+  })
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
@@ -161,7 +183,13 @@ function SupervisorsTab() {
             {filtered.length === 0 && (
               <tr><td colSpan={5} className="px-5 py-16 text-center"><EmptyState/></td></tr>
             )}
-            {filtered.map(s => (
+            {filtered.map(s => {
+              // ← أقرب إجازة "حالية أو قادمة" بس عشان نعرضها تحت الاسم (زي السلوك القديم)
+              const upcomingOrCurrent = (s.absences || [])
+                .filter(a => a.until >= todayStr)
+                .sort((a, b) => a.from.localeCompare(b.from))[0]
+
+              return (
               <tr key={s.id} className="hover:bg-gray-50/50 transition-colors">
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-3">
@@ -170,12 +198,11 @@ function SupervisorsTab() {
                     }`}>{s.name.charAt(0)}</div>
                     <div>
                       <span className="font-medium text-gray-800">{s.name}</span>
-                      {/* ← بيظهر فترة الإجازة (من - إلى) تحت الاسم لو موجودة */}
-                      {(s.absentFrom || s.absentUntil) && (
+                      {/* ← بيظهر أقرب إجازة (حالية/قادمة) تحت الاسم لو موجودة */}
+                      {upcomingOrCurrent && (
                         <p className="text-xs text-red-400 mt-0.5">
-                          {s.status === 'absent' ? 'غائب' : 'إجازة مُجدولة'}
-                          {s.absentFrom ? ` من ${s.absentFrom}` : ''}
-                          {s.absentUntil ? ` حتى ${s.absentUntil} (آخر يوم)` : ''}
+                          {upcomingOrCurrent.from <= todayStr ? 'غائب' : 'إجازة مُجدولة'}
+                          {` من ${upcomingOrCurrent.from} حتى ${upcomingOrCurrent.until} (آخر يوم)`}
                         </p>
                       )}
                     </div>
@@ -189,19 +216,18 @@ function SupervisorsTab() {
                     <div className="flex items-center gap-2">
                       <button onClick={() => openEdit(s)} className="p-2 text-yellow-600 rounded-xl hover:text-teal-600 hover:bg-teal-50 transition-all"><Pencil size={16}/></button>
                       <button onClick={() => setConfirm({ id: s.id, shift: s.shift, name: s.name })} className="p-2 text-red-500 rounded-xl hover:bg-red-50 transition-all"><Trash2 size={16}/></button>
-                      <button onClick={() => setAttendConfirm({ supervisor: s })}
-                        className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border font-semibold transition-all ${
-                          s.status === 'absent'
-                            ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100'
-                            : 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100'
-                        }`}>
-                        {s.status === 'absent' ? <><UserCheck size={13}/> حاضر</> : <><UserX size={13}/> غائب</>}
+                      <button onClick={() => setAbsenceManagerFor(s)}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border font-semibold transition-all bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100">
+                       <span className='flex items-center gap-1'> <Calendar size={13}/> الإجازات</span>
+                        {!!(s.absences?.length) && (
+                          <span className="text-[10px] bg-white/70 rounded-full px-1.5 leading-4">{s.absences.length}</span>
+                        )}
                       </button>
                     </div>
                   ) : ''}
                 </td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>
@@ -288,23 +314,6 @@ function SupervisorsTab() {
                 </select>
               </div>
             </div>
-            {/* <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-2">الحالة</label>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { value: 'active', label: 'حاضر', color: 'bg-emerald-500' },
-                  { value: 'absent', label: 'غائب', color: 'bg-red-400' },
-                ].map(opt => (
-                  <button key={opt.value} type="button" onClick={() => setForm(p => ({ ...p, status: opt.value }))}
-                    className={`border-[1.5px] rounded-xl py-3 text-center transition-all ${
-                      form.status === opt.value ? 'border-teal-500 bg-teal-50' : 'border-slate-200 bg-slate-50 hover:border-slate-300'
-                    }`}>
-                    <div className={`w-2 h-2 rounded-full mx-auto mb-1.5 ${opt.color}`}/>
-                    <span className={`text-xs font-semibold ${form.status === opt.value ? 'text-teal-700' : 'text-slate-500'}`}>{opt.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div> */}
             {saveError && (
               <p className="text-xs text-red-500 bg-red-50 border border-red-200 px-3 py-2 rounded-xl">⚠️ {saveError}</p>
             )}
@@ -322,79 +331,126 @@ function SupervisorsTab() {
         </Modal>
       )}
 
-      {attendConfirm && (
-        <ConfirmDialog
-          message={
-            attendConfirm.supervisor.status === 'absent'
-              ? `هل تريد تسجيل "${attendConfirm.supervisor.name}" حاضراً؟`
-              : `هل تريد تسجيل إجازة لـ "${attendConfirm.supervisor.name}"؟`
-          }
-          confirmText={attendConfirm.supervisor.status === 'absent' ? 'تسجيل حاضر' : 'تسجيل الإجازة'}
-          danger={attendConfirm.supervisor.status !== 'absent'}
-          // ← اتنين date inputs (من - إلى) بيظهروا بس لما بيتسجل غياب جديد
-          extraContent={attendConfirm.supervisor.status !== 'absent' ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">من تاريخ</label>
-                  <input
-                    type="date"
-                    value={absentFrom}
-                    min={todayStr}
-                    onChange={e => { setAbsentFrom(e.target.value); setDateError('') }}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-gray-700"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">
-                  إلى تاريخ <span className="text-red-400">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={absentUntil}
-                    min={absentFrom || todayStr}
-                    onChange={e => { setAbsentUntil(e.target.value); setDateError('') }}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-gray-700"
-                  />
-                </div>
-              </div>
-              {dateError && (
-                <p className="text-xs text-red-500">⚠️ {dateError}</p>
-              )}
-              {absentFrom && absentUntil && !dateError && (
-                <p className="text-xs text-teal-600">
-                  {absentFrom <= todayStr
-                    ? `✓ سيُسجَّل غائباً فوراً حتى يوم ${absentUntil} (آخر يوم إجازة)، ويعود حاضراً يوم ${nextDayStr(absentUntil)}`
-                    : `✓ ستبدأ إجازته يوم ${absentFrom} وحتى ${absentUntil} (آخر يوم إجازة)، ويعود حاضراً يوم ${nextDayStr(absentUntil)}`}
-                </p>
-              )}
+      {/* ← مودال إدارة الإجازات: عرض كل الرينجات (مرتبة) + تعديل + حذف + إضافة رينج جديد بمنع التداخل */}
+      {absenceManagerFor && (
+        <Modal
+          title={
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-red-50 text-red-500"><Calendar size={20}/></div>
+              <span className="text-xl font-bold text-gray-800">إجازات "{absenceManagerFor.name}"</span>
             </div>
-          ) : null}
-        onConfirm={async () => {
-  if (attendConfirm.supervisor.status !== 'absent') {
-    // ← "إلى تاريخ" بقى إلزامي: من غيره مش هينعرف نوزّع حصصه على باقي
-    //   المشرفين في أيام غيابه، وهيفضل غائب من غير حد يتابع الطلاب بدالًا عنه
-    if (!absentUntil) {
-      setDateError('لازم تحدد "إلى تاريخ" عشان نقدر نوزّع حصصه على باقي المشرفين')
-      return
-    }
-    if (absentFrom && absentUntil < absentFrom) {
-      setDateError('تاريخ النهاية لازم يكون بعد تاريخ البداية')
-      return
-    }
-  }
-  await toggleAbsent(attendConfirm.supervisor.id, absentFrom || null, absentUntil || null)
-  setAbsentFrom('')
-  setAbsentUntil('')
-  setDateError('')
-  setAttendConfirm(null)
-}}
-          onCancel={() => {
-            setAbsentFrom('')
-            setAbsentUntil('')
-            setDateError('')
-            setAttendConfirm(null)
+          }
+          onClose={() => setAbsenceManagerFor(null)}
+          wide>
+          <div className="space-y-5">
+            {/* قائمة الإجازات: حالية → مستقبلية (الأقرب أولًا) → منتهية/History (الأحدث أولًا) */}
+            <div className="space-y-2">
+              {sortedAbsences.length === 0 && (
+                <p className="text-sm text-gray-400 text-center py-6">لا توجد إجازات مسجّلة لهذا المشرف</p>
+              )}
+              {sortedAbsences.map((a, idx) => {
+                const isNow  = a.from <= todayStr && a.until >= todayStr
+                const isPast = a.until < todayStr
+                const label  = isNow ? 'جارية الآن' : isPast ? 'منتهية' : 'قادمة'
+                const badgeColor = isNow
+                  ? 'bg-red-50 text-red-600 border-red-200'
+                  : isPast
+                    ? 'bg-gray-100 text-gray-400 border-gray-200'
+                    : 'bg-blue-50 text-blue-600 border-blue-200'
+
+                // ← فاصل بسيط قبل أول عنصر منتهي، يفصل بين "الحالي/القادم" وبين الـ History
+                const showHistoryDivider = isPast && (idx === 0 || rankAbsence(sortedAbsences[idx - 1]) !== 2)
+
+                return (
+                  <div key={a.id}>
+                    {showHistoryDivider && (
+                      <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mt-4 mb-2">سجل الإجازات السابقة</p>
+                    )}
+                    <div
+                      className={`flex items-center justify-between border rounded-xl px-4 py-3 transition-all ${
+                        isPast ? 'border-gray-100 opacity-60' : 'border-gray-100'
+                      }`}>
+                      <div>
+                        <p className={`text-sm font-medium ${isPast ? 'text-gray-400' : 'text-gray-700'}`}>
+                          {a.from} → {a.until}
+                        </p>
+                        <span className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full border font-semibold ${badgeColor}`}>
+                          {isPast ? '✓ Completed' : label}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {/* ← تعديل متاح للإجازة الحالية أو المستقبلية بس، مش للمنتهية */}
+                        {!isPast && (
+                          <button
+                            onClick={() => setEditAbsenceTarget({ supervisorId: absenceManagerFor.id, absence: a })}
+                            className="p-2 text-yellow-600 rounded-xl hover:bg-yellow-50 transition-all">
+                            <Pencil size={16}/>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setDeleteAbsenceConfirm({
+                            supervisorId: absenceManagerFor.id,
+                            absenceId: a.id,
+                            label: `${a.from} → ${a.until}`,
+                          })}
+                          className="p-2 text-red-500 rounded-xl hover:bg-red-50 transition-all">
+                          <Trash2 size={16}/>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* إضافة إجازة جديدة (فيها منع التداخل) */}
+            <AddAbsenceForm
+              todayStr={todayStr}
+              existingAbsences={absenceManagerFor.absences || []}
+              onSubmit={async (from, until) => {
+                await addAbsence(absenceManagerFor.id, from || null, until)
+                setAbsenceManagerFor(null)
+              }}
+            />
+          </div>
+        </Modal>
+      )}
+
+      {/* ← جديد: مودال تعديل رينج إجازة موجود */}
+      {editAbsenceTarget && (
+        <Modal
+          title={
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-yellow-50 text-yellow-600"><Pencil size={20}/></div>
+              <span className="text-xl font-bold text-gray-800">تعديل الإجازة</span>
+            </div>
+          }
+          onClose={() => setEditAbsenceTarget(null)}>
+          <EditAbsenceForm
+            todayStr={todayStr}
+            absence={editAbsenceTarget.absence}
+            existingAbsences={(absenceManagerFor?.absences || []).filter(a => a.id !== editAbsenceTarget.absence.id)}
+            onSubmit={async (from, until) => {
+              await updateAbsence(editAbsenceTarget.supervisorId, editAbsenceTarget.absence.id, from, until)
+              setEditAbsenceTarget(null)
+            }}
+            onCancel={() => setEditAbsenceTarget(null)}
+          />
+        </Modal>
+      )}
+
+      {deleteAbsenceConfirm && (
+        <ConfirmDialog
+          message={`هل تريد حذف إجازة "${deleteAbsenceConfirm.label}"؟`}
+          danger isLoading={isLoading} setIsLoading={setIsLoading}
+          onConfirm={async () => {
+            setIsLoading(true)
+            await deleteAbsence(deleteAbsenceConfirm.supervisorId, deleteAbsenceConfirm.absenceId)
+            setIsLoading(false)
+            setDeleteAbsenceConfirm(null)
+            setAbsenceManagerFor(null)
           }}
+          onCancel={() => setDeleteAbsenceConfirm(null)}
         />
       )}
 
@@ -414,6 +470,155 @@ function SupervisorsTab() {
           onCancel={() => setRestock(null)}
         />
       )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ← جديد: فورم تعديل رينج إجازة موجود (prefilled)، بنفس منطق
+//   الـ validation بتاع AddAbsenceForm (منع until < from، ومنع التداخل
+//   مع أي رينج تاني غير الرينج اللي بيتعدل هو نفسه)
+// ═══════════════════════════════════════════════════════════════
+function EditAbsenceForm({ todayStr, absence, existingAbsences, onSubmit, onCancel }) {
+  const [from,    setFrom]    = useState(absence.from)
+  const [until,   setUntil]   = useState(absence.until)
+  const [error,   setError]   = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const submit = async () => {
+    setError('')
+    if (!from)  return setError('لازم تحدد "من تاريخ"')
+    if (!until) return setError('لازم تحدد "إلى تاريخ"')
+    if (until < from) return setError('تاريخ النهاية لازم يكون بعد تاريخ البداية')
+
+    const overlap = existingAbsences.find(a => from <= a.until && a.from <= until)
+    if (overlap) return setError(`الفترة دي متداخلة مع إجازة موجودة بالفعل (${overlap.from} → ${overlap.until})`)
+
+    try {
+      setLoading(true)
+      await onSubmit(from, until)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 mb-1.5">من تاريخ</label>
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none transition-all"/>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 mb-1.5">إلى تاريخ (آخر يوم)</label>
+          <input type="date" value={until} min={from} onChange={e => setUntil(e.target.value)}
+            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none transition-all"/>
+        </div>
+      </div>
+
+      {error && (
+        <p className="text-xs text-red-500 bg-red-50 border border-red-200 px-3 py-2 rounded-xl">⚠️ {error}</p>
+      )}
+
+      <div className="flex justify-end gap-3 pt-2 border-t border-slate-100">
+        <button onClick={onCancel}
+          className="px-5 py-2.5 border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-all text-sm">إلغاء</button>
+        <button onClick={submit} disabled={loading}
+          className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl shadow-sm hover:shadow-md transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+          {loading
+            ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/> جاري الحفظ...</>
+            : '✓ حفظ التعديل'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ← جديد: فورم إضافة إجازة، بيتحقق قبل الإرسال إن الرينج الجديد
+//   ملوش تداخل مع أي رينج موجود بالفعل لنفس المشرف (سواء جارية أو قادمة)
+// ═══════════════════════════════════════════════════════════════
+function rangesOverlap(aFrom, aUntil, bFrom, bUntil) {
+  // اتنين رينجات متداخلين لو بداية كل واحد <= نهاية التاني والعكس
+  return aFrom <= bUntil && bFrom <= aUntil
+}
+
+function AddAbsenceForm({ todayStr, existingAbsences, onSubmit }) {
+  const [from, setFrom]   = useState('')
+  const [until, setUntil] = useState('')
+  const [err, setErr]     = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const submit = async () => {
+    setErr('')
+    if (!until) return setErr('لازم تحدد "إلى تاريخ" عشان نقدر نوزّع حصصه على باقي المشرفين')
+
+    const effectiveFrom = from || todayStr
+    if (until < effectiveFrom) return setErr('تاريخ النهاية لازم يكون بعد تاريخ البداية')
+
+    // ← منع التداخل: نتأكد إن الرينج الجديد مش بيتقاطع مع أي رينج قائم بالفعل
+    const overlapping = (existingAbsences || []).find(a => rangesOverlap(effectiveFrom, until, a.from, a.until))
+    if (overlapping) {
+      return setErr(`الفترة دي متداخلة مع إجازة موجودة بالفعل (${overlapping.from} → ${overlapping.until})`)
+    }
+
+    try {
+      setLoading(true)
+      await onSubmit(from, until)
+    } catch (e) {
+      setErr(e.message || 'حدث خطأ أثناء إضافة الإجازة')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="border-t border-gray-100 pt-4 space-y-3">
+      <p className="text-xs font-semibold text-gray-500">إضافة إجازة جديدة</p>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 mb-1.5">من تاريخ</label>
+          <input
+            type="date"
+            value={from}
+            min={todayStr}
+            onChange={e => { setFrom(e.target.value); setErr('') }}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-gray-700"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+            إلى تاريخ <span className="text-red-400">*</span>
+          </label>
+          <input
+            type="date"
+            value={until}
+            min={from || todayStr}
+            onChange={e => { setUntil(e.target.value); setErr('') }}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all text-gray-700"
+          />
+        </div>
+      </div>
+
+      {err && <p className="text-xs text-red-500">⚠️ {err}</p>}
+
+      {from && until && !err && (
+        <p className="text-xs text-teal-600">
+          {(from || todayStr) <= todayStr
+            ? `✓ سيُسجَّل غائباً فوراً حتى يوم ${until} (آخر يوم إجازة)`
+            : `✓ ستبدأ إجازته يوم ${from} وحتى ${until} (آخر يوم إجازة)`}
+        </p>
+      )}
+
+      <button onClick={submit} disabled={loading}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+        {loading
+          ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/> جاري الإضافة...</>
+          : <><Plus size={15}/> إضافة الإجازة</>}
+      </button>
     </div>
   )
 }
@@ -685,7 +890,7 @@ const EMPTY_FORM = {
   sessionNumber: '', trialTeacherTime: '', cancelledDate: '',
   notes: '', trialDate: '', trialTime: '', startDate: '',
   regularDates: [{ day: '', time: '', teacherTime: '', timezone: 'Africa/Cairo' }],
-  pauseType: '', pauseUntil: '', _hasBeenActive: false,
+  pauseType: '',pauseFrom: '', pauseUntil: '', _hasBeenActive: false,
 }
 
 // ← آخر يوم في شهر معيّن، شكل الإدخال "YYYY-MM"
@@ -742,7 +947,7 @@ export function getStatusAtMonth(session, monthYearStr) {
 
   // ═══ الشهر مستقبلي بالكامل: قواعد خاصة حسب الحالة الحالية ═══
 
-  // ← جديد: افحص التحولات المؤجلة الأول (إلغاء/تفعيل مجدول من الأدمن
+  // ← افحص التحولات المؤجلة الأول (إلغاء/تفعيل مجدول من الأدمن
   //   بتاريخ مستقبلي)، قبل أي منطق تاني، لأنها بتتغلّب على الحالة الحيّة
   //   الحالية بمجرد ما تاريخها يوصل خلال الشهر المفلتر
   if (session.pendingCancelDate && session.pendingCancelDate <= monthEndStr) {
@@ -750,6 +955,19 @@ export function getStatusAtMonth(session, monthYearStr) {
   }
   if (session.pendingActivateDate && session.pendingActivateDate <= monthEndStr) {
     return 'active'
+  }
+
+  // ← جديد: توقف بتاريخ محدد لسه مجدول للمستقبل (الحالة الحيّة لسه
+  //   active/trial عمدًا لحد ما يوصل pauseFrom فعليًا). لو الشهر المفلتر
+  //   بيبدأ من/بعد pendingPauseDate، يبقى الحلقة "هتبقى متوقفة" وقتها —
+  //   إلا لو كمان خلصت مدة التوقف (pauseUntil) قبل نهاية الشهر ده، ساعتها
+  //   ترجع تاني للحالة الأصلية (active)
+  if (session.pendingPauseDate && session.pendingPauseDate <= monthEndStr) {
+    if (session.pauseUntil) {
+      const returnDate = nextDayStr(session.pauseUntil)
+      if (returnDate <= monthEndStr) return 'active'
+    }
+    return 'paused'
   }
 
   const current = session.status
@@ -795,7 +1013,38 @@ function getStatusSegments(session, rangeStart, rangeEnd) {
     })
   }
 
-  // ← جديد: لو فيه تحويل مؤجل (تفعيل/إلغاء مجدول من الأدمن بتاريخ مستقبلي
+  // ═══ جديد: توقف بتاريخ محدد (pauseFrom → pauseUntil) ═══
+  // شغّالة في الحالتين: (1) الحلقة اتقفلت فعليًا دلوقتي (آخر segment
+  // بحالة paused)، أو (2) التوقف لسه مجدول للمستقبل (آخر segment لسه
+  // بحالة active/trial لأن الحالة الحيّة اتعمّد إنها تفضل زي ما هي لحد
+  // ما يوصل pauseFrom). في الحالتين بنقسّم آخر segment المفتوحة عشان
+  // تظهر 3 فترات منفصلة: قبل التوقف، فترة التوقف نفسها، وبعد الرجوع.
+  if (session.pauseType === 'dated' && session.pauseFrom && session.pauseUntil) {
+    const dayBeforePause = prevDayStr(session.pauseFrom)
+    const dayAfterPause  = nextDayStr(session.pauseUntil)
+    const lastIdx = raw.length - 1
+    const last = raw[lastIdx]
+
+    if (last && last.to === null) {
+      if (last.status === 'paused') {
+        raw = [
+          ...raw.slice(0, lastIdx),
+          { status: 'paused', from: last.from, to: session.pauseUntil },
+          { status: 'active', from: dayAfterPause, to: null },
+        ]
+      } else if (last.status === 'active' || last.status === 'trial') {
+        const shouldCloseLast = !last.from || dayBeforePause >= last.from
+        raw = [
+          ...raw.slice(0, lastIdx),
+          ...(shouldCloseLast ? [{ status: last.status, from: last.from, to: dayBeforePause }] : []),
+          { status: 'paused', from: session.pauseFrom, to: session.pauseUntil },
+          { status: 'active', from: dayAfterPause, to: null },
+        ]
+      }
+    }
+  }
+
+  // ← لو فيه تحويل مؤجل (تفعيل/إلغاء مجدول من الأدمن بتاريخ مستقبلي
   //   لسه ما اتنفّذش فعليًا)، قسّم آخر segment المفتوحة عنده، عشان تظهر
   //   الحالتين منفصلتين (مثلاً: تجريبي لحد يوم كذا، ثم نشط من يوم كذا)
   const pendingDate   = session.pendingCancelDate || session.pendingActivateDate || null
@@ -958,6 +1207,7 @@ function StudentsTab() {
       regularDates:   s.regularDates  || [{ day: '', time: '', teacherTime: '', timezone: 'Africa/Cairo' }],
       pauseType:      s.pauseType     || '',
       pauseUntil:     s.pauseUntil    || '',
+      pauseFrom:      s.pauseFrom     || '',   // ← جديد
       _hasBeenActive: s._hasBeenActive || ['active', 'paused', 'cancelled'].includes(s.status),
       cancelledDate:  s.cancelledDate || '',
     })
@@ -1110,7 +1360,7 @@ const hasActiveFilters = !filterStatus.includes('all') || !filterProgram.include
         <span className="mr-auto text-xs text-slate-400 font-medium">{totalFiltered} طلاب </span>
       </div>
 
-      {/* الجدول */}
+     {/* الجدول */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
         <table className="w-full">
           <thead>
@@ -1143,9 +1393,17 @@ const hasActiveFilters = !filterStatus.includes('all') || !filterProgram.include
                       <span className="font-medium text-gray-800">{s.studentName || '—'}</span>
                       {s.status === 'paused' && s.pauseType === 'dated' && s.pauseUntil && (
                         <p className="text-xs text-orange-400 mt-0.5">
-                          متوقف حتى {s.pauseUntil} — يرجع نشط تلقائيًا {nextDayStr(s.pauseUntil)}
+                          {s.pauseFrom
+                            ? `متوقف من ${s.pauseFrom} إلى ${s.pauseUntil}`
+                            : `متوقف حتى ${s.pauseUntil}`} — يرجع نشط تلقائيًا {nextDayStr(s.pauseUntil)}
                         </p>
                       )}
+                      {/* ← جديد: توقف مجدول لسه ما اتفعّلش (الحالة الحيّة لسه active/trial) */}
+                      {/* {s.pendingPauseDate && (
+                        <p className="text-xs text-orange-400 mt-0.5">
+                          هيتوقف من {s.pendingPauseDate} إلى {s.pauseUntil}
+                        </p>
+                      )} */}
                     </div>
                   </div>
                 </td>
@@ -1184,27 +1442,62 @@ const hasActiveFilters = !filterStatus.includes('all') || !filterProgram.include
                 </td>
 
                 <td className="px-5 py-4">
-                  {/* ← وضع الفترة: اعرض كل الفترات (segments) اللي الحلقة مرّت بيها */}
-                  {dateFilterMode === 'range' && s._segments ? (
-                    <div className="flex flex-col gap-1">
-                      {s._segments.map((seg, i) => (
-                        <div key={i} className="flex items-center gap-1.5">
-                          <StudentBadge status={seg.status}/>
-                          <span className="text-[10px] text-slate-400 font-mono whitespace-nowrap">
-                            {seg.from}{seg.to ? ` → ${seg.to}` : ' → مستمرة'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <>
-                      <StudentBadge status={s._statusAtMonth ?? s.status}/>
-                      {dateFilterMode === 'month' && s._statusAtMonth !== s.status && (
-                        <span className="block text-[10px] text-slate-400 mt-0.5">حاليًا: {STATUS_LABELS[s.status] || s.status}</span>
-                      )}
-                    </>
-                  )}
-                </td>
+  {/* ← وضع الفترة: اعرض كل الفترات (segments) اللي الحلقة مرّت بيها */}
+  {dateFilterMode === 'range' && s._segments ? (
+    <div className="flex flex-col gap-1">
+      {s._segments.map((seg, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <StudentBadge status={seg.status}/>
+          <span className="text-[10px] text-slate-400 font-mono whitespace-nowrap">
+            {seg.from}{seg.to ? ` → ${seg.to}` : ' → مستمرة'}
+          </span>
+        </div>
+      ))}
+    </div>
+  ) : (
+    <>
+      <StudentBadge status={s._statusAtMonth ?? s.status}/>
+      {dateFilterMode === 'month' && s._statusAtMonth !== s.status && (
+        <span className="block text-[10px] text-slate-400 mt-0.5">حاليًا: {STATUS_LABELS[s.status] || s.status}</span>
+      )}
+
+     {/* ← تجريبي أو ملغي وله تفعيل مجدول (نشط بتاريخ مستقبلي) */}
+      {['trial', 'cancelled'].includes(s._statusAtMonth ?? s.status) && s.pendingActivateDate && (
+        <span className="block text-[10px] text-slate-400 mt-0.5">
+          سيصبح نشط يوم {s.pendingActivateDate}
+        </span>
+      )}
+
+      {/* ← نشط وله إلغاء مجدول (اتحفظ إلغاء بتاريخ مستقبلي، لسه الحالة الحيّة نشط) */}
+      {(s._statusAtMonth ?? s.status) === 'active' && s.pendingCancelDate && (
+        <span className="block text-[10px] text-red-400 mt-0.5">
+          هيتم إلغاؤه يوم {s.pendingCancelDate}
+        </span>
+      )}
+
+      {/* ← جديد: نشط/تجريبي وله توقف مجدول (اتحفظ توقف بتاريخ مستقبلي، لسه الحالة الحيّة زي ما هي) */}
+      {(s._statusAtMonth ?? s.status) !== 'paused' && s.pendingPauseDate && (
+        <span className="block text-[10px] text-slate-400 mt-0.5">
+          هيتوقف من {s.pendingPauseDate} إلى {s.pauseUntil}
+        </span>
+      )}
+
+      {/* ← متوقف لمدة محددة — هيرجع نشط تلقائيًا اليوم اللي بعد pauseUntil */}
+      {(s._statusAtMonth ?? s.status) === 'paused' && s.pauseType === 'dated' && s.pauseUntil && (
+        <span className="block text-[10px] text-orange-400 mt-0.5">
+          {s.pauseFrom && `من ${s.pauseFrom} — `}يرجع نشط يوم {nextDayStr(s.pauseUntil)}
+        </span>
+      )}
+
+      {/* ← متوقف علطول (بدون تاريخ عودة محدد) */}
+      {(s._statusAtMonth ?? s.status) === 'paused' && s.pauseType !== 'dated' && (
+        <span className="block text-[10px] text-slate-400 mt-0.5">
+          متوقف لفترة غير محددة
+        </span>
+      )}
+    </>
+  )}
+</td>
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-2">
                     <button onClick={() => openEdit(s)} className="p-2 text-yellow-600 rounded-xl hover:text-teal-600 hover:bg-teal-50 transition-all"><Pencil size={16}/></button>

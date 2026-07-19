@@ -177,9 +177,10 @@ export async function updateSession(id, form, teacherName) {
   const isFutureCancellation = form.status === "cancelled" && form.cancelledDate && form.cancelledDate > todayStr;
   // ← جديد: تفعيل مؤجل (لسه مش active وتاريخ البداية في المستقبل)
   const isFutureActivation = form.status === "active" && form.startDate && form.startDate > todayStr && oldStatus !== "active";
+  const isFuturePause = form.status === "paused" && form.pauseType === "dated" && form.pauseFrom && form.pauseFrom > todayStr;
 
-  const liveStatus = isFutureCancellation ? oldStatus : (isFutureActivation ? oldStatus : form.status);
 
+const liveStatus = isFutureCancellation ? oldStatus : (isFutureActivation ? oldStatus : (isFuturePause ? oldStatus : form.status));
   await updateDoc(sessionRef, {
     studentName: form.name || "",
     studentPhone: form.phone || "",
@@ -194,6 +195,7 @@ export async function updateSession(id, form, teacherName) {
     trialTeacherTime: form.trialTeacherTime || "",
     regularDates: form.regularDates || [],
     pauseType: form.pauseType || "",
+     pauseFrom: form.pauseFrom || "",
     pauseUntil: form.pauseUntil || "",
     notes: form.notes || "",
     flagged: form.flagged || false,
@@ -203,6 +205,8 @@ export async function updateSession(id, form, teacherName) {
     // ← جديد: "تذكرة" إلغاء مؤجل يقرأها checkAndCancelPendingSessions لاحقًا
     pendingCancelDate: isFutureCancellation ? form.cancelledDate : null,
     pendingActivateDate: isFutureActivation ? form.startDate : null,  // ← جديد
+    pendingPauseDate: isFuturePause ? form.pauseFrom : null,   // ← جديد: تذكرة يقرأها checkAndActivatePendingPauses
+
 
   });
 
@@ -223,7 +227,7 @@ export async function updateSession(id, form, teacherName) {
 
   // ← لو الإلغاء مؤجل، متعملش إعادة توزيع/شيل مشرف دلوقتي — الحلقة لسه
   //   نشطة فعليًا. الكرون هو اللي هيشيل المشرف وقت الإلغاء الفعلي.
-  if (!isFutureCancellation) {
+  if (!isFutureCancellation && !isFuturePause) {
     await reassignSessionOnStatusChange(id, oldStatus, liveStatus, {
       status: liveStatus,
       trialTime: form.trialTime,
@@ -352,12 +356,42 @@ export async function checkAndRevertPausedSessions() {
     await updateDoc(doc(db, COL, s.id), {
       status: "active",
       pauseType: "",
+      pauseFrom: "",
       pauseUntil: "",
       history: arrayUnion({ date: returnDate, status: "active" }),
     });
   }
 
   return due.length; // عدد الحلقات اللي رجعت نشطة
+}
+
+// ── تفعيل التوقفات المجدولة اللي وصل وقتها فعليًا (pendingPauseDate) ──
+// نظير checkAndRevertPausedSessions بالظبط لكن في الاتجاه المعاكس: بتشيل
+// حلقات لسه status بتاعها active/trial بس عندها pendingPauseDate وصل أو
+// فات، وتقلبها paused فعليًا، وتسجّل الانتقال في الـ history بنفس تاريخ
+// pauseFrom (مش تاريخ اليوم) عشان الـ history يفضل دقيق تاريخيًا.
+export async function checkAndActivatePendingPauses() {
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+
+  const q = query(
+    collection(db, COL),
+    where("isDeleted", "==", false),
+    where("pendingPauseDate", "<=", todayStr),
+  );
+  const snap = await getDocs(q);
+  const due = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((s) => s.status !== "paused"); // أمان إضافي لو اتنفّذت مرتين
+
+  for (const s of due) {
+    await updateDoc(doc(db, COL, s.id), {
+      status: "paused",
+      pendingPauseDate: null,
+      history: arrayUnion({ date: s.pendingPauseDate, status: "paused" }),
+    });
+  }
+
+  return due.length;
 }
 
 // ── soft delete ───────────────────────────────────────────────

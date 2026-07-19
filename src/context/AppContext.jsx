@@ -96,6 +96,8 @@ const [occurrencesError,   setOccurrencesError]   = useState(null)
       setAllSessionsLoading(true);
       // ← قبل الجلب، رجّع أي طالب "متوقف لفترة محددة" انتهت مدته لحالة نشط تلقائيًا
       await SessionsService.checkAndRevertPausedSessions();
+      await SessionsService.checkAndActivatePendingPauses();   // ← جديد
+
       const res = await SessionsService.getAllSessions();
       console.log(res);
       
@@ -216,9 +218,14 @@ const fetchSessionsForDistribution = useCallback(async() => {
         setAllSessionsLoading(false)
         setAllSessionsError(null)
 
-        if (!pausedCheckedRef.current) {
+         if (!pausedCheckedRef.current) {
           pausedCheckedRef.current = true
-          SessionsService.checkAndRevertPausedSessions().catch(() => {}) // ← شبكة أمان، صامتة لو فشلت
+          // ← شبكة أمان، صامتة لو فشلت: ترجيع المتوقفين اللي خلصت مدتهم +
+          //   تفعيل التوقفات المجدولة اللي وصل معادها فعليًا
+          Promise.all([
+            SessionsService.checkAndRevertPausedSessions(),
+            SessionsService.checkAndActivatePendingPauses(),
+          ]).catch(() => {})
         }
       },
       (err) => { setAllSessionsError(err.message); setAllSessionsLoading(false) }
@@ -279,11 +286,20 @@ const updateSupervisor = async (s) => {
   const deleteSupervisor  = async (id, shift) => { await SupervisorsService.deleteSupervisor(id, shift);  await fetchSupervisors() }
   const restoreSupervisor = async (id, shift) => { await SupervisorsService.restoreSupervisor(id, shift); await fetchSupervisors() }
   // ← بقت بتاخد absentFrom (بداية الإجازة) و absentUntil (نهايتها) بدل ما كانت تاريخ واحد بس
-  const toggleAbsent      = async (id, absentFrom = null, absentUntil = null) => {
-    await SupervisorsService.toggleAbsent(id, absentFrom, absentUntil)
-    await fetchSupervisors()
-    await fetchAllSessions()
-  }
+const addAbsence = async (id, absentFrom, absentUntil) => {
+  await SupervisorsService.addAbsence(id, absentFrom, absentUntil)
+  await fetchSupervisors()
+}
+
+const deleteAbsence = async (id, absenceId) => {
+  await SupervisorsService.deleteAbsence(id, absenceId)
+  await fetchSupervisors()
+}
+
+const updateAbsence = async (id, absenceId, from, until) => {
+  await SupervisorsService.updateAbsence(id, absenceId, from, until)
+  await fetchSupervisors()
+}
 
   // ─── Teachers CRUD ─────────────────────────────────────────
   const addTeacher    = async (form) => { await TeachersService.addTeacher(form);         await fetchTeachers() }
@@ -432,7 +448,7 @@ const updateAttendanceStatus = async (id, newStatus) => {
     <AppContext.Provider value={{
        authReady, currentUser,
       supervisors, supervisorsLoading, supervisorsError,
-      addSupervisor, updateSupervisor, deleteSupervisor, toggleAbsent, restoreSupervisor,
+      addSupervisor, updateSupervisor, deleteSupervisor, addAbsence, updateAbsence, deleteAbsence, restoreSupervisor,
       teachers, teachersLoading, teachersError,
       addTeacher, updateTeacher, deleteTeacher,
       programs, programsLoading, programsError,

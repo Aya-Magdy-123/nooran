@@ -94,7 +94,9 @@ function getDayNameFromDateStr(dateStr) {
 // ── هل الحلقة فيها اليوم المختار؟ ──
 function matchesDay(s, days) {
   if (!days || days.includes('all')) return true
-  return (s.regularDates || []).some(d => days.includes(d.day))
+  const matchesRegular = (s.regularDates || []).some(d => days.includes(d.day))
+  const matchesTrial = s.trialDate && days.includes(getDayNameFromDateStr(s.trialDate))
+  return matchesRegular || matchesTrial
 }
 
 
@@ -617,7 +619,7 @@ const saveMakeup = async () => {
   if (makeupForm.date && makeupForm.studentTime) {
     const parentSession = liveSessions.find(s => s.id === makeupSession.id)
     await upsertOccurrenceLocal(makeupSession.id, makeupForm.date, {
-      status: 'confirmed',            // الحصة دي هتحصل فعلاً، مفيش داعي تفضل pending
+      status: 'pending',            // الحصة دي هتحصل فعلاً، مفيش داعي تفضل pending
       time: makeupForm.studentTime,   // ← مهم: التاريخ ده مش من ضمن النمط العادي
       isMakeupOccurrence: true,       // ← علامة تميّزها عن حصة عادية
       makeupSourceDate: makeupOccurrence?.date || null, // مرجع للحصة الأصلية
