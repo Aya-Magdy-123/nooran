@@ -342,30 +342,9 @@ export async function reassignAbsentSupervisorOccurrences(absentId, shift, fromD
     return;
   }
 
-  const sessionsSnap = await getDocs(
-    query(
-      collection(db, "sessions"),
-      where("status", "not-in", NO_SUPERVISOR_STATUSES),
-      where("isDeleted", "==", false),
-    ),
-  );
-
-  // ← بنجيب كل الحلقات النشطة، وبنحدد ownership على مستوى كل regularDate
-  //   لوحده (مش على مستوى الحلقة كلها)، وبدون أي شرط شيفت هنا خالص —
-  //   الشيفت هيتاستخدم بعدين بس لاختيار البدلاء المتاحين
-  const candidateSessions = sessionsSnap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((s) =>
-      s.status === "trial"
-        ? s.supervisorId === absentId
-        : (s.regularDates || []).some((rd) => rd.supervisorId === absentId),
-    );
-
-  if (!candidateSessions.length) {
-    console.log(`[reassignAbsentSupervisorOccurrences] ${absentId}: مفيش حلقات مملوكة له.`);
-    return;
-  }
-
+  // ── كل المشرفين النشطين في نفس الشيفت (غير absentId)، بكامل بياناتهم
+  //    (بما فيها absences) عشان نقدر نستبعد أي حد منهم يبقى هو نفسه
+  //    غايب في نفس التاريخ بالظبط بإجازة تانية ليه ──
   const supsSnap = await getDocs(
     query(
       collection(db, "supervisors"),
@@ -374,38 +353,93 @@ export async function reassignAbsentSupervisorOccurrences(absentId, shift, fromD
       where("isDeleted", "==", false),
     ),
   );
-  const others = supsSnap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((s) => s.id !== absentId);
+  const shiftSupervisors = supsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const others = shiftSupervisors.filter((s) => s.id !== absentId);
 
   if (!others.length) {
-    console.warn(`[reassignAbsentSupervisorOccurrences] مفيش مشرفين تانيين متاحين في شيفت "${shift}"`);
+    console.warn(`[reassignAbsentSupervisorOccurrences] مفيش مشرفين تانيين في شيفت "${shift}"`);
     return;
   }
 
-  let cursor = 0;
+  // ← هل مشرف معيّن غايب في تاريخ معيّن (بناءً على absences[] بتاعته)؟
+  const isAbsentOnDate = (sup, date) =>
+    (sup.absences || []).some((a) => a.from <= date && date <= a.until);
+
+  // ← البدلاء المتاحين فعليًا في تاريخ معيّن — مش absentId، ومش غايبين هما
+  //   نفسهم في نفس اليوم ده بأي إجازة تانية ليهم
+  const availableOn = (date) => others.filter((s) => !isAbsentOnDate(s, date));
+
+  // ═══ المصدر 1: حلقات absentId مالكها فعليًا في regularDates ═══
+  const sessionsSnap = await getDocs(
+    query(
+      collection(db, "sessions"),
+      where("status", "not-in", NO_SUPERVISOR_STATUSES),
+      where("isDeleted", "==", false),
+    ),
+  );
+  const candidateSessions = sessionsSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((s) =>
+      s.status === "trial"
+        ? s.supervisorId === absentId
+        : (s.regularDates || []).some((rd) => rd.supervisorId === absentId),
+    );
+
+  // ═══ المصدر 2: occurrences مخزّنة فعليًا وسوپرفايزرها الحالي absentId ═══
+  // بيغطي حالة إن absentId كان بديل لحد تاني على حصة معيّنة، مش صاحبها
+  // الأصلي في regularDates (زي ما حصل مع منى وقت غياب عائشة سابقًا)
+  const overrideSnap = await getDocs(
+    query(
+      collection(db, "sessionOccurrences"),
+      where("supervisorId", "==", absentId),
+      where("date", ">=", fromDate),
+    ),
+  );
+  const overrideDocs = overrideSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((o) => o.date <= toDate);
+
+  if (!candidateSessions.length && !overrideDocs.length) {
+    console.log(`[reassignAbsentSupervisorOccurrences] ${absentId}: مفيش حلقات ولا حصص مملوكة له.`);
+    return;
+  }
+
   let writes = 0;
+  const handledKeys = new Set();
+  // ← cursor مستقل لكل تاريخ، عشان توزيع round-robin يفضل عادل حتى لو
+  //   قائمة المتاحين بتختلف من يوم للتاني (حد تاني غايب في يوم بعينه)
+  const cursorPerDate = {};
+
+  const assignNext = (date) => {
+    const pool = availableOn(date);
+    if (!pool.length) return null; // ← محدش متاح خالص في اليوم ده
+    const idx = (cursorPerDate[date] ?? 0) % pool.length;
+    cursorPerDate[date] = idx + 1;
+    return pool[idx];
+  };
 
   for (const session of candidateSessions) {
-    // ← كل تواريخ الحلقة في الرينج (زي القديم)، بعدين بنفلترها لبس
-    //   التواريخ اللي فعلاً صاحبها (المعاد المطابق ليها) هو absentId
     const allDates = buildSessionOccurrences(session, new Map(), {
       rangeStart: fromDate,
       rangeEnd: toDate,
     });
-
     const ownedDates = allDates.filter((o) => {
-      if (session.status === "trial") {
-        return session.supervisorId === absentId;
-      }
+      if (session.status === "trial") return session.supervisorId === absentId;
       const dow = new Date(`${o.date}T00:00:00`).getDay();
       const rd = (session.regularDates || []).find((r) => r.dayNumber === dow);
       return rd?.supervisorId === absentId;
     });
 
     for (const o of ownedDates) {
-      const sub = others[cursor % others.length];
-      cursor++;
+      const key = `${session.id}__${o.date}`;
+      if (handledKeys.has(key)) continue;
+      handledKeys.add(key);
+
+      const sub = assignNext(o.date);
+      if (!sub) {
+        console.warn(`[reassignAbsentSupervisorOccurrences] مفيش بديل متاح ليوم ${o.date} (الكل غايب)`);
+        continue;
+      }
       await OccurrencesService.upsertOccurrence(session.id, o.date, {
         supervisorId: sub.id,
         supervisorName: sub.name,
@@ -413,6 +447,27 @@ export async function reassignAbsentSupervisorOccurrences(absentId, shift, fromD
       });
       writes++;
     }
+  }
+
+  for (const o of overrideDocs) {
+    const key = `${o.sessionId}__${o.date}`;
+    if (handledKeys.has(key)) continue;
+    handledKeys.add(key);
+
+    const sub = assignNext(o.date);
+    if (!sub) {
+      console.warn(`[reassignAbsentSupervisorOccurrences] مفيش بديل متاح ليوم ${o.date} (الكل غايب)`);
+      continue;
+    }
+    await OccurrencesService.upsertOccurrence(o.sessionId, o.date, {
+      supervisorId: sub.id,
+      supervisorName: sub.name,
+      // ← حافظ على صاحب الحلقة الأصلي لو كانت أصلاً بديل لحد تاني قبل كده
+      //   (مش absentId نفسه)، عشان لما صاحبها الحقيقي يرجع من إجازته
+      //   الحصة ترجعله تلقائي مهما عدد الاستبدالات المتسلسلة اللي حصلت
+      substituteFor: o.substituteFor || absentId,
+    });
+    writes++;
   }
 
   console.log(`[reassignAbsentSupervisorOccurrences] ${absentId}: ${writes} حصة اتوزّعت من ${fromDate} لـ ${toDate}.`);
