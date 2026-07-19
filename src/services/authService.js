@@ -22,6 +22,10 @@ export async function login(email, password) {
   let userDoc = await getDoc(doc(db, "supervisors", uid));
   if (userDoc.exists()) {
     const data = userDoc.data();
+    if (data.disabled) {
+      await signOut(auth);
+      throw new Error("الحساب موقوف، تواصل مع الإدارة");
+    }
     return { uid, role: "supervisor", ...data };
   }
 
@@ -29,10 +33,14 @@ export async function login(email, password) {
   userDoc = await getDoc(doc(db, "admins", uid));
   if (userDoc.exists()) {
     const data = userDoc.data();
+    if (data.disabled) {
+      await signOut(auth);
+      throw new Error("الحساب موقوف، تواصل مع الإدارة");
+    }
     return { uid, role: "admin", ...data };
   }
 
-  throw new Error("المستخدم مش موجود في النظام");
+  throw new Error("المستخدم ليس موجود في النظام");
 }
 
 // ── Logout ────────────────────────────────────────────────────
@@ -49,10 +57,24 @@ export async function getCurrentUser() {
   const uid = user.uid;
 
   let userDoc = await getDoc(doc(db, "supervisors", uid));
-  if (userDoc.exists()) return { uid, role: "supervisor", ...userDoc.data() };
+  if (userDoc.exists()) {
+    const data = userDoc.data();
+    if (data.disabled) {
+      await signOut(auth);
+      return null;
+    }
+    return { uid, role: "supervisor", ...data };
+  }
 
   userDoc = await getDoc(doc(db, "admins", uid));
-  if (userDoc.exists()) return { uid, role: "admin", ...userDoc.data() };
+  if (userDoc.exists()) {
+    const data = userDoc.data();
+    if (data.disabled) {
+      await signOut(auth);
+      return null;
+    }
+    return { uid, role: "admin", ...data };
+  }
 
   return null;
 }
