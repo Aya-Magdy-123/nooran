@@ -22,9 +22,9 @@ export function getShiftForTime(time) {
 export function getSessionShift(session) {
   const time =
     session.status === "trial"
-      ? session.trialTime
+      ? (session.trialTeacherTime || session.trialTime)
       : session.status === "active"
-        ? session.regularDates?.[0]?.time
+        ? (session.regularDates?.[0]?.teacherTime || session.regularDates?.[0]?.time)
         : "";
   return getShiftForTime(time);
 }
@@ -63,13 +63,13 @@ export async function pickSupervisorForShift(shift, excludeSessionId = null) {
 
   existingSessions.forEach((s) => {
     if (s.status === "trial") {
-      if (getShiftForTime(s.trialTime) === shift && s.supervisorId && counts[s.supervisorId] !== undefined) {
+      if (getShiftForTime(s.trialTeacherTime || s.trialTime) === shift && s.supervisorId && counts[s.supervisorId] !== undefined) {
         counts[s.supervisorId]++;
       }
       return;
     }
     (s.regularDates || []).forEach((rd) => {
-      if (getShiftForTime(rd.time) === shift && rd.supervisorId && counts[rd.supervisorId] !== undefined) {
+      if (getShiftForTime(rd.teacherTime || rd.time) === shift && rd.supervisorId && counts[rd.supervisorId] !== undefined) {
         counts[rd.supervisorId]++;
       }
     });
@@ -88,17 +88,23 @@ export async function pickSupervisorForShift(shift, excludeSessionId = null) {
 // ── تخصيص مشرف لكل معاد في regularDates — نفس الشفت جوه نفس الحلقة ياخد
 //   نفس المشرف، والمعاد اللي متغيرش (يوم+وقت زي القديم) يفضل زي ما هو ──
 export async function assignSupervisorsToRegularDates(newRegularDates = [], oldRegularDates = [], excludeSessionId = null) {
+  // ← المفتاح بقى يشمل teacherTime كمان، مش وقت الطالب بس، عشان أي تغيير
+  //   في الشفت الفعلي (حتى لو حصل بسبب تغيير الدولة/التايم زون من غير ما
+  //   يتغيّر رقم وقت الطالب نفسه) يكسر التطابق ويجبر إعادة حساب المشرف
+  const keyOf = (rd) => `${rd.day}__${rd.time}__${rd.teacherTime || ''}`
+
   const oldMap = new Map(
     (oldRegularDates || [])
       .filter((rd) => rd.day && rd.time)
-      .map((rd) => [`${rd.day}__${rd.time}`, rd]),
+      .map((rd) => [keyOf(rd), rd]),
   );
 
   const shiftCache = new Map();
 
+
   newRegularDates.forEach((rd) => {
-    const existing = oldMap.get(`${rd.day}__${rd.time}`);
-    const shift = getShiftForTime(rd.time);
+    const existing = oldMap.get(keyOf(rd));
+    const shift = getShiftForTime(rd.teacherTime || rd.time);
     if (existing?.supervisorId && shift && !shiftCache.has(shift)) {
       shiftCache.set(shift, { supervisorId: existing.supervisorId, supervisorName: existing.supervisorName });
     }
@@ -106,13 +112,13 @@ export async function assignSupervisorsToRegularDates(newRegularDates = [], oldR
 
   const result = [];
   for (const rd of newRegularDates) {
-    const existing = oldMap.get(`${rd.day}__${rd.time}`);
+    const existing = oldMap.get(keyOf(rd));
     if (existing?.supervisorId) {
       result.push({ ...rd, supervisorId: existing.supervisorId, supervisorName: existing.supervisorName });
       continue;
     }
 
-    const shift = getShiftForTime(rd.time);
+   const shift = getShiftForTime(rd.teacherTime || rd.time);   // ← تأكد إن ده اتصلح فعلاً هنا برضو
     if (shift && shiftCache.has(shift)) {
       result.push({ ...rd, ...shiftCache.get(shift) });
     } else {
@@ -150,12 +156,12 @@ export async function reassignAbsentSupervisor(absentId, shift) {
 
   const trialSessions = trialSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((s) => getShiftForTime(s.trialTime) === shift);
+    .filter((s) => getShiftForTime(s.trialTeacherTime || s.trialTime) === shift);
 
   const activeSessions = activeSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     .filter((s) => (s.regularDates || []).some(
-      (rd) => rd.supervisorId === absentId && getShiftForTime(rd.time) === shift,
+      (rd) => rd.supervisorId === absentId && getShiftForTime(rd.teacherTime || rd.time) === shift,
     ));
 
   if (!trialSessions.length && !activeSessions.length) return;
@@ -188,7 +194,7 @@ export async function reassignAbsentSupervisor(absentId, shift) {
 
   activeSessions.forEach((s) => {
     const newRds = (s.regularDates || []).map((rd) => {
-      if (rd.supervisorId !== absentId || getShiftForTime(rd.time) !== shift) return rd;
+      if (rd.supervisorId !== absentId || getShiftForTime(rd.teacherTime || rd.time) !== shift) return rd;
       const sup = nextSup();
       return { ...rd, supervisorId: sup?.id ?? null, supervisorName: sup?.name ?? "" };
     });
@@ -215,21 +221,6 @@ export async function redistributeShift(shift) {
     ),
   );
   const allSessions = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-  const today = todayStr();
-
-  // ← قبل أي تغيير: اعمل snapshot للحصص اللي فاتت بالمشرف الحالي (قبل التبديل)
-  for (const s of allSessions) {
-    if (getSessionShift(s) !== shift && !(s.regularDates || []).some(rd => getShiftForTime(rd.time) === shift)) continue
-    const pastDates = buildSessionOccurrences(s, new Map(), { rangeEnd: today })
-      .map(o => o.date)
-      .filter(d => d <= today)
-    for (const date of pastDates) {
-      await OccurrencesService.snapshotOccurrenceSupervisor(s.id, date, {
-        supervisorId: s.supervisorId,
-        supervisorName: s.supervisorName,
-      })
-    }
-  }
 
   const supsSnap = await getDocs(
     query(
@@ -241,20 +232,21 @@ export async function redistributeShift(shift) {
   );
   const supervisors = supsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-  const batch = writeBatch(db);
   let idx = 0;
   const nextSup = () => (supervisors.length ? supervisors[idx++ % supervisors.length] : null);
-  let touched = false;
+  const updates = []; // { id, payload }
 
   allSessions.forEach((s) => {
     if (s.status === "trial") {
-      if (getShiftForTime(s.trialTime) !== shift) return;
-      touched = true;
+      if (getShiftForTime(s.trialTeacherTime || s.trialTime) !== shift) return;
       const sup = nextSup();
-      batch.update(doc(db, "sessions", s.id), {
-        supervisorId: sup?.id ?? null,
-        supervisorName: sup?.name ?? "",
-        reassignedAt: new Date().toISOString(),
+      updates.push({
+        id: s.id,
+        payload: {
+          supervisorId: sup?.id ?? null,
+          supervisorName: sup?.name ?? "",
+          reassignedAt: new Date().toISOString(),
+        },
       });
       return;
     }
@@ -262,23 +254,31 @@ export async function redistributeShift(shift) {
     const rds = s.regularDates || [];
     let changed = false;
     const newRds = rds.map((rd) => {
-      if (getShiftForTime(rd.time) !== shift) return rd;
+      if (getShiftForTime(rd.teacherTime || rd.time) !== shift) return rd;
       changed = true;
       const sup = nextSup();
       return { ...rd, supervisorId: sup?.id ?? null, supervisorName: sup?.name ?? "" };
     });
     if (!changed) return;
 
-    touched = true;
-    batch.update(doc(db, "sessions", s.id), {
-      regularDates: newRds,
-      supervisorId: newRds[0]?.supervisorId ?? null,
-      supervisorName: newRds[0]?.supervisorName ?? "",
-      reassignedAt: new Date().toISOString(),
+    updates.push({
+      id: s.id,
+      payload: {
+        regularDates: newRds,
+        supervisorId: newRds[0]?.supervisorId ?? null,
+        supervisorName: newRds[0]?.supervisorName ?? "",
+        reassignedAt: new Date().toISOString(),
+      },
     });
   });
 
-  if (touched) await batch.commit();
+  // ← بيقسّم على batches ≤450 عشان سقف الـ 500 عملية بتاع Firestore
+  for (let i = 0; i < updates.length; i += 450) {
+    const chunk = updates.slice(i, i + 450);
+    const b = writeBatch(db);
+    chunk.forEach(({ id, payload }) => b.update(doc(db, "sessions", id), payload));
+    await b.commit();
+  }
 }
 
 function regularDatesChanged(oldDates, newDates) {
@@ -290,13 +290,18 @@ function regularDatesChanged(oldDates, newDates) {
 
 // ── توزيع مشرف/مشرفين لحلقة واحدة — تُستدعى من updateSession ──
 export async function reassignSessionOnStatusChange(sessionId, oldStatus, newStatus, sessionData) {
-  const { regularDates, oldRegularDates, trialTime } = sessionData;
+  const { regularDates, oldRegularDates, trialTime, oldTrialTime } = sessionData;
 
-  if (oldStatus === newStatus && !regularDatesChanged(oldRegularDates, regularDates)) {
+  // ← جديد: لو الحلقة لسه/هتبقى trial ووقتها (بتوقيت مصر) اتغيّر، ده لازم
+  //   يستدعي إعادة توزيع حتى لو الحالة نفسها متغيرتش
+  const trialTimeChanged = newStatus === "trial" && oldTrialTime !== trialTime;
+
+  if (oldStatus === newStatus && !regularDatesChanged(oldRegularDates, regularDates) && !trialTimeChanged) {
     return;
   }
 
   const sessionRef = doc(db, "sessions", sessionId);
+
 
   if (NO_SUPERVISOR_STATUSES.includes(newStatus)) {
     await updateDoc(sessionRef, {

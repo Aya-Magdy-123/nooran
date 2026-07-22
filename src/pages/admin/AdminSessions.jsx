@@ -5,6 +5,7 @@ import StudentSessionForm from '../../components/ui/StudentSessionForm'
 import MakeupModal from '../../components/ui/MakeupModal'
 // ← توليد الحصص (occurrences) ديناميكيًا فوق الحلقات، بدون تخزينها كلها
 import { generateOccurrences, monthRange, dayRange } from '../../utils/generateOccurrences'
+import ct from 'countries-and-timezones'
 
 const DAYS_AR   = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']
 const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
@@ -148,7 +149,7 @@ function ConfirmDialog({ message, onConfirm, onCancel }) {
 function FilterSelect({ value, onChange, options }) {
   return (
     <select value={value} onChange={e => onChange(e.target.value)}
-      className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-all">
+      className="text-xs scroll-auto border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-all">
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )
@@ -201,6 +202,58 @@ function MultiFilterSelect({ value, onChange, options, label }) {
     </div>
   )
 }
+  // ضيف الكومبوننت ده جنب FilterSelect و MultiFilterSelect
+function SearchableSelect({ value, onChange, options, placeholder = 'اختر...' }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+
+  const selected = options.find(o => o.value === value)
+  const filtered = query.trim()
+    ? options.filter(o => o.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : options
+
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(p => !p)}
+        className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-teal-500/20 outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-all flex items-center gap-1.5 max-w-[200px]">
+        <span className="truncate">{selected?.label || placeholder}</span>
+        <svg className={`w-3 h-3 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/>
+        </svg>
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => { setOpen(false); setQuery('') }}/>
+          <div className="absolute z-20 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-lg p-1.5 min-w-[220px] max-h-64 overflow-y-auto">
+            <input
+              type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="بحث..."
+              autoFocus
+              className="w-full text-xs px-2.5 py-1.5 mb-1 border border-slate-200 rounded-lg outline-none focus:border-teal-400"
+            />
+            {filtered.length === 0 && (
+              <div className="px-2.5 py-2 text-xs text-slate-400 text-center">لا نتائج</div>
+            )}
+            {filtered.map(o => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => { onChange(o.value); setOpen(false); setQuery('') }}
+                className={`w-full text-right px-2.5 py-1.5 rounded-lg hover:bg-slate-50 text-xs text-slate-600 ${
+                  o.value === value ? 'bg-teal-50 text-teal-700 font-semibold' : ''
+                }`}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
 
 function MakeupCell({ occurrence, onOpen, onClearRequest }) {
   if (!occurrence) return <span className="text-slate-300 text-xs">—</span>
@@ -227,6 +280,7 @@ function MakeupCell({ occurrence, onOpen, onClearRequest }) {
       </div>
     )
   }
+
 
   return (
     <div className="flex flex-col gap-0.5 group relative min-w-[130px]">
@@ -267,7 +321,7 @@ const {
   teachers, supervisors, programs,
   addSessionLocal, updateSessionLocal, deleteSessionLocal, toggleFlagLocal, updateMakeupLocal,
   occurrences, upsertOccurrenceLocal, // ← الحصص المعدَّلة + دالة تحديثها (بمنطق الواتساب)
-    postponeRequests, postponeLoading, resolvePostpone, 
+    postponeRequests, postponeLoading, resolvePostpone,deletePostponeRequestLocal, deleteOccurrenceLocal, 
 } = useApp()
 
   // ← كل الحلقات غير المحذوفة، الفلاتر والـ pagination هنا كلهم client-side على الـ array ده
@@ -496,6 +550,7 @@ const handleOccurrenceStatusChange = async (occ, newStatus) => {
     supervisorId:   occ.supervisorId,
     supervisorName: occ.supervisorName,
     time:           occ.time,
+    teacherTime:    occ.teacherTime,
   })
 }
   const handleOccurrenceMakeupDateChange = async (occ, newMakeupDate) => {
@@ -556,8 +611,10 @@ const handleOccurrenceStatusChange = async (occ, newStatus) => {
   const handleToggleFlag     = async (id) => { await toggleFlagLocal(id) }
 const handleClearMakeup = async (occ) => {
   const parentSession = liveSessions.find(s => s.id === occ.sessionId)
+
+  // ← رجّع الحصة الأصلية لـ "قيد الانتظار" وامسح بيانات التعويض منها
   await upsertOccurrenceLocal(occ.sessionId, occ.date, {
-    status: 'postponed',
+    status: 'pending',
     makeup: null,
     makeupDate: null,
   }, {
@@ -568,13 +625,32 @@ const handleClearMakeup = async (occ) => {
     supervisorName: occ.supervisorName,
     time:           occ.time,
   })
+
+  // ← احذف الـ occurrence المستقلة اللي كانت ممثّلة حصة التعويض نفسها
+  const makeupOcc = occurrences.find(
+    o => o.sessionId === occ.sessionId && o.makeupSourceDate === occ.date
+  )
+  if (makeupOcc) {
+    await deleteOccurrenceLocal(makeupOcc.id, makeupOcc.sessionId, makeupOcc.date)
+  }
+
+  // ← امسح طلب التأجيل المرتبط بالحصة الأصلية دي نهائيًا
+  await deletePostponeRequestLocal(occ.sessionId, occ.date)
+
+  // ← نظّف بيانات التعويض على مستوى الحلقة نفسها لو كانت مسجّلة
+  if (parentSession?.makeup) {
+    await updateMakeupLocal(parentSession.id, null)
+  }
+
   setConfirm(null)
 }
   // ── Makeup ──
 
 const openMakeup = (occ) => {
   setMakeupOccurrence(occ)
-  // ← نسيب makeupSession للتوافق مع باقي استخدامات المودال (اسم الطالب/رقم الحلقة للعرض بس)
+  const parentSession = liveSessions.find(s => s.id === occ.sessionId)
+  const studentTimezone = getTimezoneByCountryName(parentSession?.country)
+
   setMakeupSession({
     id: occ.sessionId,
     studentName: occ.studentName,
@@ -584,7 +660,7 @@ const openMakeup = (occ) => {
   setMakeupForm(
     occ.makeup
       ? { ...occ.makeup }
-      : { day:'', date:'', studentTime:'', teacherTime:'', timezone:'Africa/Cairo' }
+      : { day:'', date:'', studentTime:'', teacherTime:'', timezone: studentTimezone }
   )
   setMakeupModal(true)
 }
@@ -613,7 +689,7 @@ const saveMakeup = async () => {
   const isAbsentOnDate = (sup, date) =>
     (sup.absences || []).some(a => a.from <= date && date <= a.until)
 
-  const makeupShift = getShiftForTime(makeupForm.studentTime)
+  const makeupShift = getShiftForTime(makeupForm.teacherTime)
   const shiftSupervisors = supervisors.filter(
     s => s.shift === makeupShift && s.status === 'active' && !isAbsentOnDate(s, makeupForm.date)
   )
@@ -668,10 +744,19 @@ const saveMakeup = async () => {
   setMakeupModal(false)
   setMakeupOccurrence(null)
 }
-  const formValid = !!(form.name?.trim() && form.teacherId && (
-    form.status === 'trial'  ? form.trialDate && form.trialTime :
-    form.status === 'active' ? form.regularDates?.some(d => d.day && d.time) : true
-  ))
+const isSessionNumberDuplicate = (() => {
+  const trimmed = String(form.sessionNumber || '').trim()
+  if (!trimmed) return false
+  return liveSessions.some(s =>
+    s.id !== editItem?.id &&
+    String(s.sessionNumber || '').trim().toLowerCase() === trimmed.toLowerCase()
+  )
+})()
+
+const formValid = !!(form.name?.trim() && form.teacherId && !isSessionNumberDuplicate && (
+  form.status === 'trial'  ? form.trialDate && form.trialTime :
+  form.status === 'active' ? form.regularDates?.some(d => d.day && d.time) : true
+))
 
  const hasActiveFilters = !filterStatus.includes('all') || !filterTeacher.includes('all') || !filterSupervisor.includes('all') ||
   !filterDay.includes('all') || dateFilterMode !== 'none' || !!filterSessionNumber || filterOccStatus !== 'all' || !!filterStudentId
@@ -681,6 +766,12 @@ const clearFilters = () => {
   setFilterDay(['all']); setFilterSessionNumber('')
   setDateFilterMode('none'); setFilterDateFrom(''); setFilterDateTo(''); setFilterSingleDate(''); setFilterMonthYear('')
   setFilterOccStatus('all'); setFilterStudentId('')
+}
+
+function getTimezoneByCountryName(countryName) {
+  if (!countryName) return 'Africa/Cairo'
+  const match = Object.values(ct.getAllCountries()).find(c => c.name === countryName)
+  return match?.timezones?.[0] || 'Africa/Cairo'
 }
 
   if (allSessionsLoading && allSessions.length === 0) return (
@@ -785,10 +876,16 @@ const clearFilters = () => {
           <div className="w-px h-6 bg-slate-200"/>
 
           {/* ← فلتر الطالب — بيشتغل مع باقي الفلاتر (حالة/معلم/مشرف/يوم/تاريخ) مش بدالًا عنها */}
-          <FilterSelect value={filterStudentId} onChange={setFilterStudentId} options={[
-            { value:'', label:'بدون فلتر طالب' },
-            ...liveSessions.map(s => ({ value: s.id, label: `${s.studentName} — #${s.sessionNumber}` }))
-          ]}/>
+         {/* ← فلتر الطالب — بيشتغل مع باقي الفلاتر (حالة/معلم/مشرف/يوم/تاريخ) مش بدالًا عنها */}
+          <SearchableSelect
+            value={filterStudentId}
+            onChange={setFilterStudentId}
+            placeholder="بدون فلتر طالب"
+            options={[
+              { value:'', label:'بدون فلتر طالب' },
+              ...liveSessions.map(s => ({ value: s.id, label: `${s.studentName} — #${s.sessionNumber}` }))
+            ]}
+          />
 
           {/* نوع فلتر التاريخ على مستوى الحصص (occurrences) — شغّال دايمًا، مع أو بدون فلتر طالب.
               'بدون فلتر تاريخ' هنا معناها: من النهارده وطالع (الوضع الافتراضي) */}
@@ -905,12 +1002,14 @@ const clearFilters = () => {
               </td>
               <td className="px-4 py-3.5 text-xs text-slate-500 font-mono">{r.studentPhone || '—'}</td>
               <td className="px-4 py-3.5 text-sm text-slate-600">{r.teacherName || '—'}</td>
-              <td className="px-4 py-3.5">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-xs text-slate-700 font-mono">{r.originalDate}</span>
-                  <span className="text-xs text-slate-500 font-mono">{r.originalTime}</span>
-                </div>
-              </td>
+             <td className="px-4 py-3.5">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs text-slate-700 font-mono">{r.originalDate}</span>
+                <span className="text-xs text-slate-500 font-mono">
+                  {r.originalTeacherTime ? `مصر: ${r.originalTeacherTime}` : '—'}
+                </span>
+              </div>
+            </td>
               <td className="px-4 py-3.5">
                 <span className={`text-xs border px-2.5 py-1 rounded-lg font-semibold ${
                   r.status === 'pending'
@@ -985,7 +1084,7 @@ const clearFilters = () => {
                   <td className="px-4 py-3.5">
                     <div className="flex flex-col gap-0.5">
                       <span className="text-xs text-slate-700 font-mono">{o.date}</span>
-                      {o.time && <span className="text-xs text-slate-500 font-mono">{o.time}</span>}
+                      {o.teacherTime && <span className="text-xs text-slate-500 font-mono">مصر: {o.teacherTime}</span>}
                     </div>
                   </td>
                   <td className="px-4 py-3.5 text-xs text-slate-500 whitespace-nowrap">{getDayNameFromDateStr(o.date) || '—'}</td>
@@ -1012,13 +1111,13 @@ const clearFilters = () => {
                   <td className="px-4 py-3.5 text-sm text-slate-600 whitespace-nowrap">{o.teacherName?.replace('الشيخ ','') || '—'}</td>
                   <td className="px-4 py-3.5">
                     {o.supervisorName ? (
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-6 h-6 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
-                          <User size={12} className="text-indigo-500"/>
-                        </div>
-                        <span className="text-sm text-slate-600 whitespace-nowrap">{o.supervisorName}</span>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-6 h-6 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                        <User size={12} className="text-indigo-500"/>
                       </div>
-                    ) : <span className="text-slate-300 text-sm">—</span>}
+                      <span className="text-sm text-slate-600 whitespace-nowrap">{o.supervisorName}</span>
+                    </div>
+                  ) : <span className="text-slate-400 text-sm">لا يوجد مشرف</span>}
                   </td>
                   <td className="px-4 py-3.5">
                     <select

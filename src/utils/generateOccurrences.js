@@ -305,6 +305,13 @@ function buildOccurrence(session, date, stored, occurrenceNumber = null) {
   const hasStoredSupervisorField = !!stored && Object.prototype.hasOwnProperty.call(stored, 'supervisorId')
   const shouldFreeze = isSubstitute || (hasStoredSupervisorField && (isPast || isResolved))
 
+  // ← جديد: وقت المعلم (توقيت مصر) — نفس أولوية حساب وقت الطالب بالظبط،
+  //   بس من الحقول المخصصة لوقت المعلم (teacherTime / trialTeacherTime)
+  const teacherTime =
+    stored?.teacherTime
+    || matchingRegular?.teacherTime
+    || (date === session.trialDate ? session.trialTeacherTime : null)
+    || null
 
   return {
     id: stored?.id || `${session.id}__${date}`,
@@ -315,10 +322,13 @@ function buildOccurrence(session, date, stored, occurrenceNumber = null) {
     teacherId: session.teacherId,
     teacherName: stored?.teacherName || session.teacherName,
     supervisorId:   shouldFreeze ? (stored.supervisorId ?? null) : liveSupervisorId,
-    supervisorName: shouldFreeze ? (stored.supervisorName || "لا يوجد مشرف") : liveSupervisorName,
+    supervisorName: shouldFreeze
+  ? (stored.supervisorName || "لا يوجد مشرف")
+  : (liveSupervisorName || "لا يوجد مشرف"),   // ← جديد: fallback موحّد في الحالتين
     flagged: stored?.flagged || false,
     date,
     time: stored?.time || matchingRegular?.time || (date === session.trialDate ? session.trialTime : session.regularDates?.[0]?.time),
+    teacherTime, // ← جديد: وقت المعلم (توقيت مصر) — ده اللي هيتعرض في الواجهة
     status: stored?.status || defaultOccurrenceStatus(),
     makeupDate: stored?.makeupDate || null,
     makeup: stored?.makeup || null,

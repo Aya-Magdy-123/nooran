@@ -92,9 +92,18 @@ const StatusBadge = ({ status }) => {
 const ATTENDANCE_OPTIONS = ["confirmed", "absent", "postponed", "pending"];
 
 function AttendanceStatusDropdown({ occurrence, parentSession }) {
-  const { upsertOccurrenceLocal } = useApp();
+  const { updateSessionLocal, allSessions } = useApp();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const isDuplicateSessionNumber = (() => {
+  const trimmed = String(form.sessionNumber || '').trim();
+  if (!trimmed) return false;
+  return (allSessions || []).some(s =>
+    !s.isDeleted &&
+    s.id !== session.id &&
+    String(s.sessionNumber || '').trim().toLowerCase() === trimmed.toLowerCase()
+  );
+})();
   const [pos, setPos] = useState({ top: 0, right: 0 });
   const btnRef = useRef(null);
 
@@ -131,6 +140,7 @@ function AttendanceStatusDropdown({ occurrence, parentSession }) {
         supervisorId: occurrence.supervisorId || parentSession?.supervisorId,
         supervisorName: occurrence.supervisorName || parentSession?.supervisorName,
         time: occurrence.time,
+        teacherTime: occurrence.teacherTime,
       });
     } catch (err) {
       console.error(err);
@@ -230,6 +240,7 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
+      if (isDuplicateSessionNumber) return;
     try {
       setSaving(true);
       await updateSessionLocal(session.id, form);
@@ -282,8 +293,12 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
           </button>
           <button
             onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-5 py-2 text-sm font-semibold bg-teal-500 hover:bg-teal-600 disabled:bg-teal-300 text-white rounded-xl transition-all shadow-sm"
+             disabled={saving || isDuplicateSessionNumber}
+              className={`flex items-center gap-2 px-5 py-2 text-sm font-semibold rounded-xl transition-all shadow-sm ${
+                isDuplicateSessionNumber
+                  ? 'bg-slate-300 cursor-not-allowed text-white'
+                  : 'bg-teal-500 hover:bg-teal-600 disabled:bg-teal-300 text-white'
+              }`}
           >
             {saving ? (
               <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
@@ -490,7 +505,7 @@ export default function SupervisorHalaqas({ teachers, programs }) {
   const saveMakeup = async () => {
     const makeupData = { ...makeupForm, confirmed: true };
 
-    const makeupShift = getShiftForTime(makeupForm.studentTime);
+    const makeupShift = getShiftForTime(makeupForm.teacherTime)
     const shiftSupervisors = (supervisors || []).filter(
       (s) => s.shift === makeupShift && s.status === "active"
     );
@@ -716,7 +731,7 @@ export default function SupervisorHalaqas({ teachers, programs }) {
                             <td className="px-5 py-4">
                               <div className="flex flex-col gap-0.5">
                                 <span className="text-xs text-gray-700 font-mono">{o.date}</span>
-                                {o.time && <span className="text-xs text-gray-400 font-mono">{o.time}</span>}
+                                {o.teacherTime && <span className="text-xs text-gray-400 font-mono">مصر: {o.teacherTime}</span>}
                               </div>
                             </td>
                             <td className="px-5 py-4">

@@ -7,6 +7,7 @@ import {
   query,
   where,
   orderBy,
+  deleteDoc,
 } from "firebase/firestore";
 import { db } from "../../firebase";
 
@@ -68,4 +69,21 @@ export async function resolvePostponeBySessionId(sessionId, newDate, newTime) {
   }
 
   return resolvedList;
+}
+
+// ← حذف نهائي لطلب التأجيل المرتبط بحصة أصلية معينة (مش تحديث status)
+// بتُستخدم لما نلغي تعويض محدَّد وعايزين الطلب يختفي خالص، مش يفضل resolved
+export async function deletePostponeRequestBySessionAndDate(sessionId, originalDate) {
+  const q = query(
+    collection(db, COL),
+    where("sessionId", "==", sessionId),
+    where("originalDate", "==", originalDate),
+  );
+  const snap = await getDocs(q);
+  const deletedIds = [];
+  for (const docSnap of snap.docs) {
+    await deleteDoc(doc(db, COL, docSnap.id));
+    deletedIds.push(docSnap.id);
+  }
+  return deletedIds;
 }
