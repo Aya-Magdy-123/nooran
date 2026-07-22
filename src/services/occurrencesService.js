@@ -136,6 +136,7 @@ export async function updateOccurrenceStatus(sessionId, date, newStatus, meta = 
         supervisorId: meta.supervisorId || "",
         originalDate: date,
         originalTime: meta.time || "",
+        originalTeacherTime: meta.teacherTime || "",
         sourceType: "occurrence",
         status: "pending",
         createdAt: new Date().toISOString(),

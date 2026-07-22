@@ -102,10 +102,7 @@ export default function AdminOverview() {
         .map((s) => ({
           id: s.id,
           studentName: s.studentName || "—",
-          time:
-            s.trialTime ||
-            s.regularDates?.find((d) => d.day === todayDayAr)?.time ||
-            "—",
+         time: s.trialTeacherTime || s.regularDates?.find(d => d.day === todayDayAr)?.teacherTime || "—",
           status: s.status,
         }));
       return {
@@ -253,7 +250,7 @@ export default function AdminOverview() {
                             </span>
                           </div>
                           <div className="flex items-center gap-1 text-gray-500 text-xs">
-                            <Clock size={12} /> {sess.time}
+                            <Clock size={12} />  مصر : {sess.time}
                           </div>
                         </div>
                       ))}
@@ -376,9 +373,9 @@ export default function AdminOverview() {
                           {r.teacherName}
                         </span>
                         <span className="text-xs text-gray-300">·</span>
-                        <span className="text-xs text-gray-400 font-mono">
-                          {r.originalDate} — {r.originalTime}
-                        </span>
+                       <span className="text-xs text-gray-400 font-mono">
+                        {r.originalDate} — {r.originalTeacherTime ? `مصر: ${r.originalTeacherTime}` : '—'}
+                      </span>
                         <span className="text-xs text-gray-300">·</span>
                         <span className="text-xs text-gray-500">
                           {r.reason}

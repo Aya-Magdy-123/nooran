@@ -95,8 +95,8 @@ const [occurrencesError,   setOccurrencesError]   = useState(null)
     try{
       setAllSessionsLoading(true);
       // ← قبل الجلب، رجّع أي طالب "متوقف لفترة محددة" انتهت مدته لحالة نشط تلقائيًا
-      await SessionsService.checkAndRevertPausedSessions();
-      await SessionsService.checkAndActivatePendingPauses();   // ← جديد
+      // await SessionsService.checkAndRevertPausedSessions();
+      // await SessionsService.checkAndActivatePendingPauses();   // ← جديد
 
       const res = await SessionsService.getAllSessions();
       console.log(res);
@@ -218,15 +218,15 @@ const fetchSessionsForDistribution = useCallback(async() => {
         setAllSessionsLoading(false)
         setAllSessionsError(null)
 
-         if (!pausedCheckedRef.current) {
-          pausedCheckedRef.current = true
-          // ← شبكة أمان، صامتة لو فشلت: ترجيع المتوقفين اللي خلصت مدتهم +
-          //   تفعيل التوقفات المجدولة اللي وصل معادها فعليًا
-          Promise.all([
-            SessionsService.checkAndRevertPausedSessions(),
-            SessionsService.checkAndActivatePendingPauses(),
-          ]).catch(() => {})
-        }
+        //  if (!pausedCheckedRef.current) {
+        //   pausedCheckedRef.current = true
+        //   // ← شبكة أمان، صامتة لو فشلت: ترجيع المتوقفين اللي خلصت مدتهم +
+        //   //   تفعيل التوقفات المجدولة اللي وصل معادها فعليًا
+        //   Promise.all([
+        //     SessionsService.checkAndRevertPausedSessions(),
+        //     SessionsService.checkAndActivatePendingPauses(),
+        //   ]).catch(() => {})
+        // }
       },
       (err) => { setAllSessionsError(err.message); setAllSessionsLoading(false) }
     )
@@ -390,6 +390,12 @@ const updateAttendanceStatus = async (id, newStatus) => {
     await fetchPostponeRequests()
   }
 
+  const deletePostponeRequestLocal = async (sessionId, originalDate) => {
+  await PostponeService.deletePostponeRequestBySessionAndDate(sessionId, originalDate)
+  setPostponeRequests(prev =>
+    prev.filter(r => !(r.sessionId === sessionId && r.originalDate === originalDate))
+  )
+}
   // ═══════════════════════════════════════════════════════════
   // ─── Occurrences (حصص الحلقات) ───────────────────────────────
   // ← جديد: تحديث/إنشاء override لحصة واحدة محليًا، بدون إعادة جلب كل الـ occurrences.
@@ -465,7 +471,7 @@ const updateAttendanceStatus = async (id, newStatus) => {
 
       addSessionLocal, updateSessionLocal, deleteSessionLocal, toggleFlagLocal, updateMakeupLocal, updateAttendanceStatus,
       halaqas, addHalaqa, updateHalaqa, deleteHalaqa,
-       resolvePostpone,redistributeShift,postponeRequests,
+       resolvePostpone,redistributeShift,postponeRequests,deletePostponeRequestLocal,
        postponeLoading, postponeError, fetchPostponeRequests, distributionSessions
     }}>
       {children}

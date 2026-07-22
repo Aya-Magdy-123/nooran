@@ -3,7 +3,8 @@ import PhoneInput from 'react-phone-input-2'
 import 'react-phone-input-2/lib/style.css'
 import { DateTime } from 'luxon'
 import ct from 'countries-and-timezones'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useApp } from '../../context/AppContext'
 
 
 // جيب كل البلاد مرتبة أبجدياً
@@ -57,6 +58,25 @@ function getTimezoneOffset(timezone, date) {
 export default function StudentSessionForm({ form, setForm, teachers, programs, editItem }) {
     const [countryCode, setCountryCode] = useState('EG')
 
+    const { allSessions } = useApp()
+
+const isDuplicateSessionNumber = (() => {
+  const trimmed = String(form.sessionNumber || '').trim()
+  if (!trimmed) return false
+  return (allSessions || []).some(s =>
+    !s.isDeleted &&
+    s.id !== editItem?.id &&
+    String(s.sessionNumber || '').trim().toLowerCase() === trimmed.toLowerCase()
+  )
+})()
+
+    useEffect(() => {
+  if (editItem && form.country) {
+    const match = Object.values(ct.getAllCountries()).find(c => c.name === form.country)
+    if (match) setCountryCode(match.id)
+  }
+}, [editItem])
+
 
   const statusOptions = form._hasBeenActive
     ? [
@@ -107,10 +127,19 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
         </div>
 
         {/* رقم الحلقة */}
-        <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1.5">رقم الحلقة</label>
-          <input className={inputClass} placeholder=" رقم الحلقه..." type='text' value={form.sessionNumber} onChange={e => setForm(p => ({ ...p, sessionNumber: e.target.value }))}/>
-        </div>
+              <div>
+        <label className="block text-xs font-semibold text-slate-500 mb-1.5">رقم الحلقة</label>
+        <input
+          className={`${inputClass} ${isDuplicateSessionNumber ? 'border-red-300 focus:border-red-400 focus:ring-red-500/10' : ''}`}
+          placeholder=" رقم الحلقه..."
+          type='text'
+          value={form.sessionNumber}
+          onChange={e => setForm(p => ({ ...p, sessionNumber: e.target.value }))}
+        />
+        {isDuplicateSessionNumber && (
+          <p className="text-xs text-red-500 mt-1">⚠️ رقم الحلقة ده موجود بالفعل، اختار رقم تاني</p>
+        )}
+      </div>
 
         {/* رقم الهاتف + البلد تلقائي */}
          {/* البلد */}

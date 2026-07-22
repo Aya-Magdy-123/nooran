@@ -114,7 +114,7 @@ export async function addSession(form, teacherName) {
   let regularDatesWithSupervisors = form.regularDates || [];
 
   if (form.status === "trial") {
-    const assigned = await pickSupervisorForShift(getShiftForTime(form.trialTime), null);
+    const assigned = await pickSupervisorForShift(getShiftForTime(form.trialTeacherTime || form.trialTime), null);
     supervisorId = assigned.supervisorId;
     supervisorName = assigned.supervisorName;
   } else if (form.status === "active" && form.regularDates?.length) {
@@ -167,6 +167,8 @@ export async function updateSession(id, form, teacherName) {
   const oldData = oldSnap.data() || {};
   const oldStatus = oldData.status;
   const oldRegularDates = oldData.regularDates;
+  const oldTrialTeacherTime = oldData.trialTeacherTime || oldData.trialTime || "";   // ← جديد
+
 
   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
 
@@ -191,7 +193,7 @@ const liveStatus = isFutureCancellation ? oldStatus : (isFutureActivation ? oldS
     program: form.program || "",
     status: liveStatus,   // ← الحيّة الفعلية، مش form.status مباشرة
     trialDate: form.trialDate || "",
-    trialTime: form.trialTime || "",
+   trialTime: form.trialTime || "",              // ✅ رجّعناه لوقت الطالب الخام
     trialTeacherTime: form.trialTeacherTime || "",
     regularDates: form.regularDates || [],
     pauseType: form.pauseType || "",
@@ -202,6 +204,7 @@ const liveStatus = isFutureCancellation ? oldStatus : (isFutureActivation ? oldS
     makeup: form.makeup ?? null,
     cancelledDate: form.cancelledDate || "",
     startDate: form.startDate || "",
+     sessionNumber: form.sessionNumber || "",
     // ← جديد: "تذكرة" إلغاء مؤجل يقرأها checkAndCancelPendingSessions لاحقًا
     pendingCancelDate: isFutureCancellation ? form.cancelledDate : null,
     pendingActivateDate: isFutureActivation ? form.startDate : null,  // ← جديد
@@ -230,7 +233,8 @@ const liveStatus = isFutureCancellation ? oldStatus : (isFutureActivation ? oldS
   if (!isFutureCancellation && !isFuturePause) {
     await reassignSessionOnStatusChange(id, oldStatus, liveStatus, {
       status: liveStatus,
-      trialTime: form.trialTime,
+      trialTime: form.trialTeacherTime || form.trialTime,
+      oldTrialTime: oldTrialTeacherTime,
       oldRegularDates,
       regularDates: form.regularDates,
     });
@@ -315,6 +319,9 @@ export async function updateAttendanceStatus(id, newStatus) {
         originalDate: session.trialDate || "",
         originalTime:
           session.trialTime || session.regularDates?.[0]?.time || "",
+            originalTeacherTime: // ← جديد
+          session.trialTeacherTime || session.regularDates?.[0]?.teacherTime || "",
+        sourceType,
         sourceType,
         status: "pending",
         createdAt: new Date().toISOString(),
@@ -325,74 +332,74 @@ export async function updateAttendanceStatus(id, newStatus) {
 
 // ← يوم واحد بعد تاريخ معين (YYYY-MM-DD) — نفس منطق nextDayStr في AdminUsers.jsx
 //   (لازم نستخدم مكونات التاريخ المحلية لا toISOString عشان توقيت القاهرة)
-function nextDayStr(dateStr) {
-  const d = new Date(dateStr + "T00:00:00");
-  d.setDate(d.getDate() + 1);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
+// function nextDayStr(dateStr) {
+//   const d = new Date(dateStr + "T00:00:00");
+//   d.setDate(d.getDate() + 1);
+//   const y = d.getFullYear();
+//   const m = String(d.getMonth() + 1).padStart(2, "0");
+//   const day = String(d.getDate()).padStart(2, "0");
+//   return `${y}-${m}-${day}`;
+// }
 
 // ── رجوع الطلاب المتوقفين "لفترة محددة" لحالة نشط تلقائيًا بعد ما ينتهي pauseUntil ──
 // بتتنفّذ كل ما بنجيب الحلقات (fetchAllSessions في AppContext) عشان تفضل الحالة محدّثة
 // من غير ما نحتاج جوب/cron فعلي على السيرفر. لو الطالب pauseType === 'dated' و pauseUntil
 // فات، بيرجع 'active' فورًا ويتسجل في الـ history إنه رجع نشط بتاريخ اليوم اللي بعد pauseUntil.
-export async function checkAndRevertPausedSessions() {
-  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+// export async function checkAndRevertPausedSessions() {
+//   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
 
-  const q = query(
-    collection(db, COL),
-    where("status", "==", "paused"),
-    where("isDeleted", "==", false),
-  );
-  const snap = await getDocs(q);
-  const due = snap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((s) => s.pauseType === "dated" && s.pauseUntil && s.pauseUntil < todayStr);
+//   const q = query(
+//     collection(db, COL),
+//     where("status", "==", "paused"),
+//     where("isDeleted", "==", false),
+//   );
+//   const snap = await getDocs(q);
+//   const due = snap.docs
+//     .map((d) => ({ id: d.id, ...d.data() }))
+//     .filter((s) => s.pauseType === "dated" && s.pauseUntil && s.pauseUntil < todayStr);
 
-  for (const s of due) {
-    const returnDate = nextDayStr(s.pauseUntil);
-    await updateDoc(doc(db, COL, s.id), {
-      status: "active",
-      pauseType: "",
-      pauseFrom: "",
-      pauseUntil: "",
-      history: arrayUnion({ date: returnDate, status: "active" }),
-    });
-  }
+//   for (const s of due) {
+//     const returnDate = nextDayStr(s.pauseUntil);
+//     await updateDoc(doc(db, COL, s.id), {
+//       status: "active",
+//       pauseType: "",
+//       pauseFrom: "",
+//       pauseUntil: "",
+//       history: arrayUnion({ date: returnDate, status: "active" }),
+//     });
+//   }
 
-  return due.length; // عدد الحلقات اللي رجعت نشطة
-}
+//   return due.length; // عدد الحلقات اللي رجعت نشطة
+// }
 
-// ── تفعيل التوقفات المجدولة اللي وصل وقتها فعليًا (pendingPauseDate) ──
-// نظير checkAndRevertPausedSessions بالظبط لكن في الاتجاه المعاكس: بتشيل
-// حلقات لسه status بتاعها active/trial بس عندها pendingPauseDate وصل أو
-// فات، وتقلبها paused فعليًا، وتسجّل الانتقال في الـ history بنفس تاريخ
-// pauseFrom (مش تاريخ اليوم) عشان الـ history يفضل دقيق تاريخيًا.
-export async function checkAndActivatePendingPauses() {
-  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+// // ── تفعيل التوقفات المجدولة اللي وصل وقتها فعليًا (pendingPauseDate) ──
+// // نظير checkAndRevertPausedSessions بالظبط لكن في الاتجاه المعاكس: بتشيل
+// // حلقات لسه status بتاعها active/trial بس عندها pendingPauseDate وصل أو
+// // فات، وتقلبها paused فعليًا، وتسجّل الانتقال في الـ history بنفس تاريخ
+// // pauseFrom (مش تاريخ اليوم) عشان الـ history يفضل دقيق تاريخيًا.
+// export async function checkAndActivatePendingPauses() {
+//   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
 
-  const q = query(
-    collection(db, COL),
-    where("isDeleted", "==", false),
-    where("pendingPauseDate", "<=", todayStr),
-  );
-  const snap = await getDocs(q);
-  const due = snap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((s) => s.status !== "paused"); // أمان إضافي لو اتنفّذت مرتين
+//   const q = query(
+//     collection(db, COL),
+//     where("isDeleted", "==", false),
+//     where("pendingPauseDate", "<=", todayStr),
+//   );
+//   const snap = await getDocs(q);
+//   const due = snap.docs
+//     .map((d) => ({ id: d.id, ...d.data() }))
+//     .filter((s) => s.status !== "paused"); // أمان إضافي لو اتنفّذت مرتين
 
-  for (const s of due) {
-    await updateDoc(doc(db, COL, s.id), {
-      status: "paused",
-      pendingPauseDate: null,
-      history: arrayUnion({ date: s.pendingPauseDate, status: "paused" }),
-    });
-  }
+//   for (const s of due) {
+//     await updateDoc(doc(db, COL, s.id), {
+//       status: "paused",
+//       pendingPauseDate: null,
+//       history: arrayUnion({ date: s.pendingPauseDate, status: "paused" }),
+//     });
+//   }
 
-  return due.length;
-}
+//   return due.length;
+// }
 
 // ── soft delete ───────────────────────────────────────────────
 export async function deleteSession(id) {
