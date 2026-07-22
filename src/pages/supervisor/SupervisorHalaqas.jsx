@@ -92,7 +92,7 @@ const StatusBadge = ({ status }) => {
 const ATTENDANCE_OPTIONS = ["confirmed", "absent", "postponed", "pending"];
 
 function AttendanceStatusDropdown({ occurrence, parentSession }) {
-  const { upsertOccurrenceLocal } = useApp();
+  const { updateSessionLocal, allSessions } = useApp();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   
@@ -132,6 +132,7 @@ function AttendanceStatusDropdown({ occurrence, parentSession }) {
         supervisorId: occurrence.supervisorId || parentSession?.supervisorId,
         supervisorName: occurrence.supervisorName || parentSession?.supervisorName,
         time: occurrence.time,
+        teacherTime: occurrence.teacherTime,
         teacherTime: occurrence.teacherTime,
       });
     } catch (err) {
@@ -242,6 +243,7 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
 
   const handleSave = async () => {
       if (isDuplicateSessionNumber) return;
+      if (isDuplicateSessionNumber) return;
     try {
       setSaving(true);
       await updateSessionLocal(session.id, form);
@@ -294,6 +296,12 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
           </button>
           <button
             onClick={handleSave}
+             disabled={saving || isDuplicateSessionNumber}
+              className={`flex items-center gap-2 px-5 py-2 text-sm font-semibold rounded-xl transition-all shadow-sm ${
+                isDuplicateSessionNumber
+                  ? 'bg-slate-300 cursor-not-allowed text-white'
+                  : 'bg-teal-500 hover:bg-teal-600 disabled:bg-teal-300 text-white'
+              }`}
              disabled={saving || isDuplicateSessionNumber}
               className={`flex items-center gap-2 px-5 py-2 text-sm font-semibold rounded-xl transition-all shadow-sm ${
                 isDuplicateSessionNumber
@@ -506,6 +514,7 @@ export default function SupervisorHalaqas({ teachers, programs }) {
   const saveMakeup = async () => {
     const makeupData = { ...makeupForm, confirmed: true };
 
+    const makeupShift = getShiftForTime(makeupForm.teacherTime)
     const makeupShift = getShiftForTime(makeupForm.teacherTime)
     const shiftSupervisors = (supervisors || []).filter(
       (s) => s.shift === makeupShift && s.status === "active"
@@ -732,6 +741,7 @@ export default function SupervisorHalaqas({ teachers, programs }) {
                             <td className="px-5 py-4">
                               <div className="flex flex-col gap-0.5">
                                 <span className="text-xs text-gray-700 font-mono">{o.date}</span>
+                                {o.teacherTime && <span className="text-xs text-gray-400 font-mono">مصر: {o.teacherTime}</span>}
                                 {o.teacherTime && <span className="text-xs text-gray-400 font-mono">مصر: {o.teacherTime}</span>}
                               </div>
                             </td>
