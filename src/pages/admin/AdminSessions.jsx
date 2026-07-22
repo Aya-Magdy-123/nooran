@@ -295,7 +295,7 @@ function MakeupCell({ occurrence, onOpen, onClearRequest }) {
           <span className="text-purple-500"> (مصر: {makeup.teacherTime})</span>}
       </span>
       <button onClick={() => onClearRequest(occurrence)}
-        className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs hover:bg-red-200 transition-all">
+      className="absolute -top-1 -left-1 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs hover:bg-red-200 transition-all">
         ✕
       </button>
     </div>
@@ -723,7 +723,8 @@ const saveMakeup = async () => {
     const parentSession = liveSessions.find(s => s.id === makeupSession.id)
     await upsertOccurrenceLocal(makeupSession.id, makeupForm.date, {
       status: 'pending',            // الحصة دي هتحصل فعلاً، مفيش داعي تفضل pending
-      time: makeupForm.studentTime,   // ← مهم: التاريخ ده مش من ضمن النمط العادي
+      time: makeupForm.studentTime,
+       teacherTime: makeupForm.teacherTime,   // ← مهم: التاريخ ده مش من ضمن النمط العادي
       isMakeupOccurrence: true,       // ← علامة تميّزها عن حصة عادية
       makeupSourceDate: makeupOccurrence?.date || null, // مرجع للحصة الأصلية
       supervisorId:   newSupervisor?.id   ?? null,

@@ -435,6 +435,17 @@ const updateAttendanceStatus = async (id, newStatus) => {
       await fetchPostponeRequests()
     }
 
+    // ← جديد: لو الحالة اتغيّرت *بعيدًا* عن postponed (لأي حاجة غير makeup،
+    //   لأن makeup بيتصرف ليها في مسارها الخاص عن طريق resolvePostpone)،
+    //   امسح أي طلب تأجيل معلّق مرتبط بنفس الحصة، عشان يختفي فورًا من
+    //   جدول "طلبات التأجيل"
+    if (patch.status && patch.status !== 'postponed' && patch.status !== 'makeup') {
+      await PostponeService.deletePostponeRequestBySessionAndDate(sessionId, date)
+      setPostponeRequests(prev =>
+        prev.filter(r => !(r.sessionId === sessionId && r.originalDate === date))
+      )
+    }
+
     return result
   }
 

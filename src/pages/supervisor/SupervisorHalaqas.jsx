@@ -92,7 +92,7 @@ const StatusBadge = ({ status }) => {
 const ATTENDANCE_OPTIONS = ["confirmed", "absent", "postponed", "pending"];
 
 function AttendanceStatusDropdown({ occurrence, parentSession }) {
-  const { updateSessionLocal, allSessions } = useApp();
+   const { upsertOccurrenceLocal } = useApp();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   
@@ -133,7 +133,7 @@ function AttendanceStatusDropdown({ occurrence, parentSession }) {
         supervisorName: occurrence.supervisorName || parentSession?.supervisorName,
         time: occurrence.time,
         teacherTime: occurrence.teacherTime,
-        teacherTime: occurrence.teacherTime,
+        
       });
     } catch (err) {
       console.error(err);
@@ -243,7 +243,6 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
 
   const handleSave = async () => {
       if (isDuplicateSessionNumber) return;
-      if (isDuplicateSessionNumber) return;
     try {
       setSaving(true);
       await updateSessionLocal(session.id, form);
@@ -302,12 +301,7 @@ function EditModal({ session, teachers, programs, onClose, onSave }) {
                   ? 'bg-slate-300 cursor-not-allowed text-white'
                   : 'bg-teal-500 hover:bg-teal-600 disabled:bg-teal-300 text-white'
               }`}
-             disabled={saving || isDuplicateSessionNumber}
-              className={`flex items-center gap-2 px-5 py-2 text-sm font-semibold rounded-xl transition-all shadow-sm ${
-                isDuplicateSessionNumber
-                  ? 'bg-slate-300 cursor-not-allowed text-white'
-                  : 'bg-teal-500 hover:bg-teal-600 disabled:bg-teal-300 text-white'
-              }`}
+            
           >
             {saving ? (
               <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
@@ -388,8 +382,8 @@ function MakeupCell({ occurrence, onOpen, onClearRequest }) {
       <span className="text-xs text-slate-600 font-mono">{makeup.date}</span>
       <button
         onClick={() => onClearRequest(occurrence)}
-        className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs hover:bg-red-200 transition-all"
-      >
+        className="absolute -top-1 -left-1 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs hover:bg-red-200 transition-all">
+      
         ✕
       </button>
     </div>
@@ -457,22 +451,17 @@ export default function SupervisorHalaqas({ teachers, programs }) {
   }, [sessionsForSupervisor, occurrences, todayStr]);
 
   // تجميع حصص اليوم حسب المعلم + الوقت
-  const groups = useMemo(() => {
-    if (!todayOccurrences.length) return [];
-    const grouped = todayOccurrences.reduce((acc, o) => {
-      const key = `${o.teacherId}_${o.time || ""}`;
-      if (!acc[key])
-        acc[key] = {
-          key,
-          teacherName: o.teacherName || "—",
-          time: o.time || "—",
-          occurrences: [],
-        };
-      acc[key].occurrences.push(o);
-      return acc;
-    }, {});
-    return Object.values(grouped).sort((a, b) => a.time.localeCompare(b.time));
-  }, [todayOccurrences]);
+ const groups = useMemo(() => {
+  if (!todayOccurrences.length) return [];
+  return todayOccurrences
+    .map((o) => ({
+      key: o.id,                        // ← معرّف الحصة نفسها، مش المعلم+الوقت
+      teacherName: o.teacherName || "—",
+      time: o.time || "—",
+      occurrences: [o],
+    }))
+    .sort((a, b) => a.time.localeCompare(b.time));
+}, [todayOccurrences]);
 
   const getStats = (occs) => ({
     active: occs.filter((o) => o.parentSession?.status === "active").length,
@@ -511,19 +500,25 @@ export default function SupervisorHalaqas({ teachers, programs }) {
   // ← تحديد تعويض: بيتسجل على مستوى الحصة (occurrence) — status: 'makeup'،
   //   مع تحديث نسخة الحلقة (session.makeup) كمان عشان reminderJob.js لسه
   //   بيقرا منها عشان يبعت تذكير الواتساب
-  const saveMakeup = async () => {
+const saveMakeup = async () => {
     const makeupData = { ...makeupForm, confirmed: true };
 
-    const makeupShift = getShiftForTime(makeupForm.teacherTime)
-    const makeupShift = getShiftForTime(makeupForm.teacherTime)
+    // ← إضافة: استبعاد أي مشرف غايب في يوم التعويض بالذات (زي AdminSessions)
+    const isAbsentOnDate = (sup, date) =>
+      (sup.absences || []).some(a => a.from <= date && date <= a.until);
+
+    const makeupShift = getShiftForTime(makeupForm.teacherTime);
     const shiftSupervisors = (supervisors || []).filter(
-      (s) => s.shift === makeupShift && s.status === "active"
+      (s) => s.shift === makeupShift && s.status === "active" && !isAbsentOnDate(s, makeupForm.date)
     );
     const newSupervisor = shiftSupervisors[0];
 
     if (newSupervisor) {
       makeupData.supervisorId = newSupervisor.id;
       makeupData.supervisorName = newSupervisor.name;
+    } else {
+      makeupData.supervisorId = null;
+      makeupData.supervisorName = "لا يوجد مشرف";
     }
 
     if (makeupOccurrence) {
@@ -531,8 +526,26 @@ export default function SupervisorHalaqas({ teachers, programs }) {
         status: "makeup",
         makeup: makeupData,
         makeupDate: makeupForm.date,
-        supervisorId: newSupervisor?.id || undefined,
-        supervisorName: newSupervisor?.name || undefined,
+        supervisorId: newSupervisor?.id ?? null,
+        supervisorName: newSupervisor?.name ?? "لا يوجد مشرف",
+      });
+    }
+
+    // ← جديد: كانت ناقصة بالكامل — إنشاء occurrence مستقلة على تاريخ
+    //   التعويض نفسه، مع teacherTime عشان تظهر بتوقيت مصر زي الجدول الأساسي
+    if (makeupForm.date && makeupForm.studentTime) {
+      const parentSession = sessionsForSupervisor.find(s => s.id === makeupSession.id);
+      await upsertOccurrenceLocal(makeupSession.id, makeupForm.date, {
+        status: "pending",
+        time: makeupForm.studentTime,
+        teacherTime: makeupForm.teacherTime,   // ← ده اللي كان ناقص
+        isMakeupOccurrence: true,
+        makeupSourceDate: makeupOccurrence?.date || null,
+        supervisorId: newSupervisor?.id ?? null,
+        supervisorName: newSupervisor?.name ?? "لا يوجد مشرف",
+      }, {
+        studentName: parentSession?.studentName,
+        teacherName: parentSession?.teacherName,
       });
     }
 
@@ -741,7 +754,6 @@ export default function SupervisorHalaqas({ teachers, programs }) {
                             <td className="px-5 py-4">
                               <div className="flex flex-col gap-0.5">
                                 <span className="text-xs text-gray-700 font-mono">{o.date}</span>
-                                {o.teacherTime && <span className="text-xs text-gray-400 font-mono">مصر: {o.teacherTime}</span>}
                                 {o.teacherTime && <span className="text-xs text-gray-400 font-mono">مصر: {o.teacherTime}</span>}
                               </div>
                             </td>
