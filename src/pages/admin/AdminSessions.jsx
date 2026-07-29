@@ -785,6 +785,7 @@ function getTimezoneByCountryName(countryName) {
   if (allSessionsError) return <div className="text-center py-20 text-red-400">⚠️ {allSessionsError}</div>
 
   return (
+      <>
     <div dir="rtl" className="space-y-6 font-sans p-6 min-h-screen">
 
       {/* Header */}
@@ -1220,7 +1221,10 @@ function getTimezoneByCountryName(countryName) {
         </div>
       )}
 
-      {/* Modal إضافة/تعديل */}
+
+    </div>
+  
+          {/* Modal إضافة/تعديل */}
       {modalOpen && (
         <Modal wide
           title={
@@ -1284,6 +1288,6 @@ function getTimezoneByCountryName(countryName) {
           onCancel={() => setConfirm(null)}
         />
       )}
-    </div>
+      </>
   )
 }
