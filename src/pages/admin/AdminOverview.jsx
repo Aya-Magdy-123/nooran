@@ -50,7 +50,13 @@ export default function AdminOverview() {
     sessionsPerDay, sessionsPerDayLoading, sessionsPerDayError, fetchSessionsPerDay
   } = useApp();
 
-  console.log(sessionsPerDay);
+  console.log(
+  sessionsPerDay?.reduce((acc, s) => {
+    const key = `${s.status ?? "NO_STATUS"} ${s.isDeleted ? "(deleted)" : ""}`;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {})
+);
 
   useEffect(()=>{
     const fetchSessions = async () => {
@@ -80,7 +86,7 @@ export default function AdminOverview() {
 
 
 
-  const noshowSessions = sessionsPerDay?.filter((s) => s.status === "cancelled");
+   const noshowSessions = sessionsPerDay?.filter((s) => s.status === "cancelled" && !s.isDeleted);
 
   // في الـ component
   const [postponeRequests, setPostponeRequests] = useState([]);
@@ -99,6 +105,7 @@ export default function AdminOverview() {
   const supervisorSessions = activeSups
     .map((sup) => {
       const supSessions = sessionsPerDay?.filter((s) => s.supervisorId === sup.id)
+      .filter((s) => !s.isDeleted)
         .map((s) => ({
           id: s.id,
           studentName: s.studentName || "—",
@@ -146,7 +153,11 @@ export default function AdminOverview() {
               label: "معلمون",
               value: teachers.filter((t) => !t.isDeleted).length,
             },
-            { label: "حلقات اليوم", value: sessionsPerDay?.length, accent: true },
+            {
+              label: "حلقات اليوم",
+              value: sessionsPerDay?.filter((s) => !s.isDeleted).length,
+              accent: true,
+            },
           ].map((s) => (
             <div
               key={s.label}
@@ -207,7 +218,7 @@ export default function AdminOverview() {
                 توزيع الحلقات — اليوم
               </h2>
               <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-                {sessionsPerDay?.length} حلقة
+                {sessionsPerDay?.filter((s) => !s.isDeleted).length} حلقة
               </span>
             </div>
             {supervisorSessions.length === 0 ? (

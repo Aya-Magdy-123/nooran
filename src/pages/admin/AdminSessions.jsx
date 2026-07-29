@@ -649,7 +649,8 @@ const handleClearMakeup = async (occ) => {
 const openMakeup = (occ) => {
   setMakeupOccurrence(occ)
   const parentSession = liveSessions.find(s => s.id === occ.sessionId)
-  const studentTimezone = getTimezoneByCountryName(parentSession?.country)
+  const studentTimezone = parentSession?.timezone || getTimezoneByCountryName(parentSession?.country)
+
 
   setMakeupSession({
     id: occ.sessionId,

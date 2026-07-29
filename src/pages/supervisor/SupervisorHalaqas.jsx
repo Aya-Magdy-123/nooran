@@ -20,6 +20,7 @@ import { createPortal } from "react-dom";
 import { useRef } from "react";
 // ← توليد الحصص (occurrences) ديناميكيًا فوق الحلقات — نفس اللي بتستخدمه AdminSessions
 import { generateOccurrences } from "../../utils/generateOccurrences";
+import ct from "countries-and-timezones";
 
 // ─── Status Badge ────────────────────────────────
 // ← بقى فيه نوعين من الحالات بيتعرضوا بنفس المكوّن:
@@ -337,6 +338,12 @@ function getShiftForTime(time) {
   return "evening";
 }
 
+function getTimezoneByCountryName(countryName) {
+  if (!countryName) return "Africa/Cairo";
+  const match = Object.values(ct.getAllCountries()).find(c => c.name === countryName);
+  return match?.timezones?.[0] || "Africa/Cairo";
+}
+
 // ─── MakeupCell — بقت شغالة على مستوى الحصة (occurrence) مش الحلقة ──
 function MakeupCell({ occurrence, onOpen, onClearRequest }) {
   const { makeup } = occurrence;
@@ -450,12 +457,11 @@ export default function SupervisorHalaqas({ teachers, programs }) {
     }));
   }, [sessionsForSupervisor, occurrences, todayStr]);
 
-  // تجميع حصص اليوم حسب المعلم + الوقت
  const groups = useMemo(() => {
   if (!todayOccurrences.length) return [];
   return todayOccurrences
     .map((o) => ({
-      key: o.id,                        // ← معرّف الحصة نفسها، مش المعلم+الوقت
+      key: o.id,                        
       teacherName: o.teacherName || "—",
       time: o.time || "—",
       occurrences: [o],
@@ -483,7 +489,9 @@ export default function SupervisorHalaqas({ teachers, programs }) {
 
   const openMakeup = (occ) => {
     setMakeupOccurrence(occ);
-    setMakeupSession({
+       const parentSession = occ.parentSession || sessionsForSupervisor.find(s => s.id === occ.sessionId);
+        const studentTimezone = parentSession?.timezone || getTimezoneByCountryName(parentSession?.country);
+     setMakeupSession({
       id: occ.sessionId,
       studentName: occ.studentName,
       sessionNumber: occ.sessionNumber,
@@ -492,7 +500,8 @@ export default function SupervisorHalaqas({ teachers, programs }) {
     setMakeupForm(
       occ.makeup
         ? { ...occ.makeup }
-        : { day: "", date: "", studentTime: "", teacherTime: "", timezone: "Africa/Cairo" }
+        :{ day: "", date: "", studentTime: "", teacherTime: "", timezone: studentTimezone }
+
     );
     setMakeupModal(true);
   };

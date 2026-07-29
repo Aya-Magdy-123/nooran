@@ -7,25 +7,21 @@ import { useState, useEffect } from 'react'
 import { useApp } from '../../context/AppContext'
 
 
-// جيب كل البلاد مرتبة أبجدياً
+// جيب كل البلاد مرتبة أبجدياً — مع كل التايم زونز بتاعة كل دولة (مش بس أول واحدة)
 const ALL_COUNTRIES = Object.values(ct.getAllCountries())
   .map(c => ({
     name: c.name,
-    id:   c.id,                    // كود البلد (EG, SA, JP...)
-    timezone: c.timezones?.[0],    // أول timezone للبلد
+    id: c.id,                      // كود البلد (EG, SA, JP...)
+    timezones: c.timezones || [],  // كل الـ timezones بتاعة البلد
   }))
-  .filter(c => c.timezone)
+  .filter(c => c.timezones.length)
   .sort((a, b) => a.name.localeCompare(b.name))
 
 const inputClass = "w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all"
 
-function calcTeacherTime(studentTime, countryCode) {
-  if (!studentTime || !countryCode) return ''
+function calcTeacherTime(studentTime, timezone) {
+  if (!studentTime || !timezone) return ''
   try {
-    const country  = ct.getCountry(countryCode)
-    const timezone = country?.timezones?.[0]
-    if (!timezone) return ''
-
     const [h, m] = studentTime.split(':').map(Number)
 
     const studentDt = DateTime.now()
@@ -46,19 +42,26 @@ const weekDays = [
   { label: 'السبت', number: 6 },
 ];
 
-function getTimezoneOffset(timezone, date) {
-  const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }))
-  const tzDate  = new Date(date.toLocaleString('en-US', { timeZone: timezone }))
-  return (tzDate - utcDate) / 60000
+// بيرجع الـ offset الحقيقي دلوقتي (بيحسب التوقيت الصيفي/الشتوي أوتوماتيك) بدل الرقم الثابت
+function getCurrentOffsetLabel(timezone) {
+  try {
+    return DateTime.now().setZone(timezone).toFormat('ZZ')
+  } catch { return '' }
 }
 
 
 
 // ← أضفنا editItem كـ prop
 export default function StudentSessionForm({ form, setForm, teachers, programs, editItem }) {
-    const [countryCode, setCountryCode] = useState('EG')
+   const [phoneCountryCode, setPhoneCountryCode] = useState('EG')   // بس لعرض العلم في PhoneInput — مستقل تمامًا عن التوقيت
+   const [countryId, setCountryId] = useState('EG')                 // الدولة (محل الإقامة) — بتحدد التوقيت
+   const [timezoneCode, setTimezoneCode] = useState('Africa/Cairo') // المنطقة الزمنية بالظبط جوه الدولة
 
     const { allSessions } = useApp()
+
+    const selectedCountry   = ALL_COUNTRIES.find(c => c.id === countryId)
+    const countryTimezones  = selectedCountry?.timezones || []
+    const needsRegionSelect = countryTimezones.length > 1 // فيه أكتر من توقيت جوه الدولة دي (زي أمريكا/روسيا/كندا)
 
 const isDuplicateSessionNumber = (() => {
   const trimmed = String(form.sessionNumber || '').trim()
@@ -70,13 +73,46 @@ const isDuplicateSessionNumber = (() => {
   )
 })()
 
-    useEffect(() => {
-  if (editItem && form.country) {
-    const match = Object.values(ct.getAllCountries()).find(c => c.name === form.country)
-    if (match) setCountryCode(match.id)
+useEffect(() => {
+  if (editItem && form.timezone) {
+    setTimezoneCode(form.timezone)
+    const tzInfo = ct.getTimezone(form.timezone)
+    if (tzInfo?.countries?.[0]) setCountryId(tzInfo.countries[0])
+  } else if (editItem && form.country) {
+    const match = ALL_COUNTRIES.find(c => c.name === form.country)
+    if (match) {
+      setCountryId(match.id)
+      setTimezoneCode(match.timezones[0])
+    }
   }
 }, [editItem])
 
+  // دالة موحدة تحدث الفورم لما التوقيت يتغير (سواء من اختيار الدولة أو من اختيار المنطقة)
+  const applyTimezone = (tz, countryName) => {
+    setForm(p => ({
+      ...p,
+      timezone: tz,
+      country: countryName || '',
+      trialTeacherTime: calcTeacherTime(p.trialTime, tz),
+      regularDates: (p.regularDates || []).map(d => ({
+        ...d,
+        teacherTime: calcTeacherTime(d.time, tz)
+      }))
+    }))
+  }
+
+  const handleCountryChange = (id) => {
+    setCountryId(id)
+    const country = ALL_COUNTRIES.find(c => c.id === id)
+    const tz = country?.timezones?.[0] || ''
+    setTimezoneCode(tz)
+    applyTimezone(tz, country?.name)
+  }
+
+  const handleTimezoneChange = (tz) => {
+    setTimezoneCode(tz)
+    applyTimezone(tz, selectedCountry?.name)
+  }
 
   const statusOptions = form._hasBeenActive
     ? [
@@ -98,8 +134,8 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
   const dates   = [...(p.regularDates || [])]
   const updated = { ...dates[idx], [field]: value }
   if (field === 'time') {
-    updated.teacherTime = calcTeacherTime(value, countryCode)
-  }
+  updated.teacherTime = calcTeacherTime(value, timezoneCode)
+}
   if(field === 'day'){
     updated.dayNumber = weekDays.find((w)=> w.label === value).number;
   }
@@ -141,64 +177,58 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
         )}
       </div>
 
-        {/* رقم الهاتف + البلد تلقائي */}
-         {/* البلد */}
-        <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1.5">البلد</label>
-          <select
-            className={inputClass}
-            value={countryCode}
-            onChange={e => {
-              const code    = e.target.value
-              const country = ct.getCountry(code)
-              setCountryCode(code)
-              setForm(p => ({
-                ...p,
-                country: country?.name || '',
-                  trialTeacherTime: calcTeacherTime(p.trialTime, code),  // ← جديد
-                // إعادة حساب teacherTime لكل المواعيد
-                regularDates: (p.regularDates || []).map(d => ({
-                  ...d,
-                  teacherTime: calcTeacherTime(d.time, code)
-                }))
-              }))
-            }}>
-            {ALL_COUNTRIES.map(c => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          {/* عرض الـ timezone */}
-          {countryCode && (
-            <p className="text-xs text-slate-400 mt-1">
-              🕐 {ct.getCountry(countryCode)?.timezones?.[0]}
-            </p>
-          )}
-        </div>
+       {/* الدولة — محل الإقامة، وهي اللي بتحدد التوقيت */}
+<div>
+  <label className="block text-xs font-semibold text-slate-500 mb-1.5">الدولة (محل الإقامة)</label>
+  <select
+    className={inputClass}
+    value={countryId}
+    onChange={e => handleCountryChange(e.target.value)}>
+    <option value="">اختر الدولة...</option>
+    {ALL_COUNTRIES.map(c => (
+      <option key={c.id} value={c.id}>{c.name}</option>
+    ))}
+  </select>
+</div>
 
-         {/* رقم الهاتف */}
-        <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1.5">رقم الهاتف</label>
-          <PhoneInput
-            country={countryCode.toLowerCase()}  // ← بيتزامن مع البلد المختار
-            value={form.phone}
-            onChange={(phone, countryData) => {
-              const code    = countryData.countryCode.toUpperCase()
-              const country = ct.getCountry(code)
-              setCountryCode(code)
-              setForm(p => ({
-                ...p,
-                phone,
-                country: country?.name || countryData.name,
-                trialTeacherTime: calcTeacherTime(p.trialTime, code),  // ← جديد
-                regularDates: (p.regularDates || []).map(d => ({
-                  ...d,
-                  teacherTime: calcTeacherTime(d.time, code)
-                }))
-              }))
-            }}
-            inputClass="w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all"
-          />
-        </div>
+{/* المنطقة الزمنية جوه الدولة — تظهر بس لو الدولة فيها أكتر من توقيت (أمريكا، روسيا، كندا...) */}
+{needsRegionSelect && (
+  <div>
+    <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+      المنطقة داخل {selectedCountry?.name}
+    </label>
+    <select
+      className={inputClass}
+      value={timezoneCode}
+      onChange={e => handleTimezoneChange(e.target.value)}>
+      {countryTimezones.map(tz => {
+        const city = tz.split('/').pop().replace(/_/g, ' ')
+        return (
+          <option key={tz} value={tz}>
+            {city} ({getCurrentOffsetLabel(tz)})
+          </option>
+        )
+      })}
+    </select>
+    {/* اسم الـ IANA الكامل + الفرق الحقيقي دلوقتي (بعد حساب التوقيت الصيفي) تحت نفس السيلكت */}
+    {timezoneCode && (
+      <p className="text-xs text-slate-400 mt-1">
+        🕐 {timezoneCode} (UTC{getCurrentOffsetLabel(timezoneCode)})
+      </p>
+    )}
+  </div>
+)}
+
+{/* لو الدولة فيها توقيت واحد بس، اعرض اسمه هنا بدل ما يبان لوحده في مكان تاني */}
+{!needsRegionSelect && timezoneCode && (
+  <div className="flex items-end">
+    <p className="text-xs text-slate-400">
+      🕐 {timezoneCode} (UTC{getCurrentOffsetLabel(timezoneCode)})
+    </p>
+  </div>
+)}
+
+
 
         {/* وسيلة التواصل */}
         {/* <div>
@@ -214,6 +244,19 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
         </div> */}
 
       </div>
+             {/* رقم الهاتف — مستقل تمامًا عن الدولة/التوقيت */}
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 mb-1.5">رقم الهاتف</label>
+          <PhoneInput
+            country={phoneCountryCode.toLowerCase()}
+            value={form.phone}
+            onChange={(phone, countryData) => {
+              setPhoneCountryCode(countryData.countryCode.toUpperCase())
+              setForm(p => ({ ...p, phone }))
+            }}
+            inputClass="w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/10 transition-all"
+          />
+        </div>
 
       {/* المعلم + البرنامج */}
       <div className="grid grid-cols-2 gap-3">
@@ -285,10 +328,10 @@ const updateRegularDate = (idx, field, value) => setForm(p => {
                   </label>
                   <input type="time" className={inputClass} value={form.trialTime || ''}
                     onChange={e => {
-                      const newTime     = e.target.value
-                      const teacherTime = calcTeacherTime(newTime, countryCode)
-                      setForm(p => ({ ...p, trialTime: newTime, trialTeacherTime: teacherTime }))
-                    }} />
+                    const newTime     = e.target.value
+                    const teacherTime = calcTeacherTime(newTime, timezoneCode)
+                    setForm(p => ({ ...p, trialTime: newTime, trialTeacherTime: teacherTime }))
+                  }} />
                 </div>
               </div>
 
