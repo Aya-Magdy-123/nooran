@@ -73,6 +73,22 @@ const isDuplicateSessionNumber = (() => {
   )
 })()
 
+  // دالة موحدة تحدث الفورم لما التوقيت يتغير (سواء من اختيار الدولة أو من اختيار المنطقة)
+  // ← لازم تكون معرّفة قبل الـ useEffect تحت عشان تقدر تستخدمها
+  const applyTimezone = (tz, countryName) => {
+    setForm(p => ({
+      ...p,
+      timezone: tz,
+      country: countryName || '',
+      trialTeacherTime: calcTeacherTime(p.trialTime, tz),
+      regularDates: (p.regularDates || []).map(d => ({
+        ...d,
+        timezone: tz, // ← إصلاح: كانت ناقصة، فكانت بتفضل على القيمة الافتراضية القديمة
+        teacherTime: calcTeacherTime(d.time, tz)
+      }))
+    }))
+  }
+
 useEffect(() => {
   if (editItem && form.timezone) {
     setTimezoneCode(form.timezone)
@@ -84,22 +100,14 @@ useEffect(() => {
       setCountryId(match.id)
       setTimezoneCode(match.timezones[0])
     }
+  } else if (!editItem && !form.country) {
+    // ← إصلاح: حلقة جديدة — الـ select بيظهر "مصر" مختارة افتراضيًا بصريًا
+    //   (countryId='EG')، فلازم نتأكد إن form.country/timezone يتسجلوا فعليًا
+    //   بنفس القيمة من أول لحظة، وإلا هتتسجل الحلقة من غير country/timezone
+    //   خالص لو الأدمن مامسّتش الحقل ده أبدًا
+    applyTimezone('Africa/Cairo', 'Egypt')
   }
 }, [editItem])
-
-  // دالة موحدة تحدث الفورم لما التوقيت يتغير (سواء من اختيار الدولة أو من اختيار المنطقة)
-  const applyTimezone = (tz, countryName) => {
-    setForm(p => ({
-      ...p,
-      timezone: tz,
-      country: countryName || '',
-      trialTeacherTime: calcTeacherTime(p.trialTime, tz),
-      regularDates: (p.regularDates || []).map(d => ({
-        ...d,
-        teacherTime: calcTeacherTime(d.time, tz)
-      }))
-    }))
-  }
 
   const handleCountryChange = (id) => {
     setCountryId(id)
@@ -127,17 +135,19 @@ useEffect(() => {
 
   const addRegularDate = () => setForm(p => ({
     ...p,
-    regularDates: [...(p.regularDates || []), { day: '', time: '', teacherTime: '', timezone: 'Africa/Cairo' }]
+    regularDates: [...(p.regularDates || []), { day: '', time: '', teacherTime: '', timezone: timezoneCode }]
   }))
 
 const updateRegularDate = (idx, field, value) => setForm(p => {
   const dates   = [...(p.regularDates || [])]
   const updated = { ...dates[idx], [field]: value }
   if (field === 'time') {
-  updated.teacherTime = calcTeacherTime(value, timezoneCode)
-}
-  if(field === 'day'){
-    updated.dayNumber = weekDays.find((w)=> w.label === value).number;
+    updated.teacherTime = calcTeacherTime(value, timezoneCode)
+    updated.timezone = timezoneCode // ← إصلاح: كانت ناقصة
+  }
+  if (field === 'day') {
+    // ← إصلاح: منع كراش لو الأدمن رجّعت الـ select لـ "اختر اليوم..." (قيمة فاضية)
+    updated.dayNumber = weekDays.find((w) => w.label === value)?.number ?? null
   }
     dates[idx] = updated
   return { ...p, regularDates: dates }
